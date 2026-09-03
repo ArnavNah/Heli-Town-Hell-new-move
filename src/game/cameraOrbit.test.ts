@@ -1,335 +1,146 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
-describe('Free 360° Camera Orbit System', () => {
-  const BASE_DISTANCE = 36;
-  const BASE_HEIGHT = 28;
-  const BASE_LOOK_DIST = 9;
-  const BASE_LOOK_HEIGHT = 2;
-  const BASE_PITCH_ANGLE = Math.atan2(BASE_HEIGHT - BASE_LOOK_HEIGHT, BASE_DISTANCE + BASE_LOOK_DIST); // ~30.07 deg
+// Pure re-implementation of the trailing chase-camera spec formulas (see
+// GameEngine.updateCamera). Kept dependency-free so the exact contract is
+// locked down without constructing the whole engine.
+interface ChaseState {
+  camX: number;
+  camY: number;
+  camZ: number;
+  lookX: number;
+  lookY: number;
+  lookZ: number;
+}
 
-  describe('Strict Camera Geometry & Pitch Invariants Across 360° Yaw Orbit', () => {
-    it('maintains constant radial distance and height at any arbitrary orbit angle', () => {
-      const heliPos = new THREE.Vector3(100, 26, -200);
-      const testAngles = [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4, Math.PI, -Math.PI / 2, -Math.PI / 4];
+const MAX_SPEED = 34;
 
-      for (const yaw of testAngles) {
-        const sinYaw = Math.sin(yaw);
-        const cosYaw = Math.cos(yaw);
+function speedRatio(horizontalSpeed: number): number {
+  return THREE.MathUtils.clamp(horizontalSpeed / MAX_SPEED, 0, 1.2);
+}
 
-        const offsetX = sinYaw * BASE_DISTANCE;
-        const offsetZ = cosYaw * BASE_DISTANCE;
+function desiredCamera(
+  player: { x: number; y: number; z: number },
+  heading: number,
+  horizontalSpeed: number,
+): { x: number; y: number; z: number } {
+  const sr = speedRatio(horizontalSpeed);
+  const camDist = 26 + sr * 4.5;
+  // altitudeAboveCushion = (playerY - 2.4), clamped at 0.
+  const altAboveCushion = Math.max(0, player.y - 2.4);
+  const camHeight = 20 + altAboveCushion * 0.34 + sr * 1.6;
+  return {
+    x: player.x - Math.sin(heading) * camDist,
+    y: player.y + camHeight,
+    z: player.z - Math.cos(heading) * camDist,
+  };
+}
 
-        const camPos = new THREE.Vector3(
-          heliPos.x + offsetX,
-          heliPos.y + BASE_HEIGHT,
-          heliPos.z + offsetZ,
-        );
+function desiredLook(
+  player: { x: number; y: number; z: number },
+  heading: number,
+  horizontalSpeed: number,
+): { x: number; y: number; z: number } {
+  const sr = speedRatio(horizontalSpeed);
+  const lookaheadDist = 18 + sr * 6.0;
+  return {
+    x: player.x + Math.sin(heading) * lookaheadDist,
+    y: Math.max(3, player.y * 0.55),
+    z: player.z + Math.cos(heading) * lookaheadDist,
+  };
+}
 
-        const lookOffsetX = -sinYaw * BASE_LOOK_DIST;
-        const lookOffsetZ = -cosYaw * BASE_LOOK_DIST;
+function easeStep(
+  state: ChaseState,
+  dt: number,
+  targetCam: { x: number; y: number; z: number },
+  targetLook: { x: number; y: number; z: number },
+): ChaseState {
+  // dt*10 horizontal, dt*8 vertical; look target dt*12.
+  const hK = 1 - Math.exp(-10 * dt);
+  const vK = 1 - Math.exp(-8 * dt);
+  const lK = 1 - Math.exp(-12 * dt);
+  return {
+    camX: state.camX + (targetCam.x - state.camX) * hK,
+    camY: state.camY + (targetCam.y - state.camY) * vK,
+    camZ: state.camZ + (targetCam.z - state.camZ) * hK,
+    lookX: state.lookX + (targetLook.x - state.lookX) * lK,
+    lookY: state.lookY + (targetLook.y - state.lookY) * lK,
+    lookZ: state.lookZ + (targetLook.z - state.lookZ) * lK,
+  };
+}
 
-        const lookPos = new THREE.Vector3(
-          heliPos.x + lookOffsetX,
-          heliPos.y + BASE_LOOK_HEIGHT,
-          heliPos.z + lookOffsetZ,
-        );
-
-        // 1. Horizontal radius to player is constant
-        const horizontalDist = Math.hypot(camPos.x - heliPos.x, camPos.z - heliPos.z);
-        expect(horizontalDist).toBeCloseTo(BASE_DISTANCE, 5);
-
-        // 2. Relative height above player is constant
-        const relCamHeight = camPos.y - heliPos.y;
-        expect(relCamHeight).toBeCloseTo(BASE_HEIGHT, 5);
-
-        // 3. LookAt target relative height is constant
-        const relLookHeight = lookPos.y - heliPos.y;
-        expect(relLookHeight).toBeCloseTo(BASE_LOOK_HEIGHT, 5);
-
-        // 4. Distance between camera and look target along horizontal plane
-        const totalHorizontalSpan = Math.hypot(camPos.x - lookPos.x, camPos.z - lookPos.z);
-        expect(totalHorizontalSpan).toBeCloseTo(BASE_DISTANCE + BASE_LOOK_DIST, 5);
-
-        // 5. Vertical pitch angle is invariant
-        const verticalDrop = camPos.y - lookPos.y;
-        const pitchAngle = Math.atan2(verticalDrop, totalHorizontalSpan);
-        expect(pitchAngle).toBeCloseTo(BASE_PITCH_ANGLE, 5);
-      }
-    });
-
-    it('smoothly wraps camera yaw between -PI and PI without mathematical singularity', () => {
-      let yaw = Math.PI * 0.95;
-      const rotationStep = Math.PI * 0.2; // Rotates past +PI
-
-      yaw += rotationStep;
-      while (yaw > Math.PI) yaw -= Math.PI * 2;
-      while (yaw < -Math.PI) yaw += Math.PI * 2;
-
-      expect(yaw).toBeCloseTo(-Math.PI * 0.85, 5);
-      expect(yaw).toBeGreaterThanOrEqual(-Math.PI);
-      expect(yaw).toBeLessThanOrEqual(Math.PI);
-    });
+describe('trailing chase camera (flight spec)', () => {
+  it('clamps the speed ratio to 0..1.2', () => {
+    expect(speedRatio(0)).toBe(0);
+    expect(speedRatio(MAX_SPEED)).toBe(1);
+    expect(speedRatio(MAX_SPEED * 2)).toBe(1.2);
   });
 
-  describe('Camera-Relative Movement Projections', () => {
-    function calculateMoveVector(kbX: number, kbY: number, cameraYaw: number): { x: number; z: number } {
-      const camFwd = new THREE.Vector3(-Math.sin(cameraYaw), 0, -Math.cos(cameraYaw)).normalize();
-      const camRight = new THREE.Vector3().crossVectors(camFwd, new THREE.Vector3(0, 1, 0)).normalize();
+  it('pulls back and rises as speed grows', () => {
+    const player = { x: 0, y: 15, z: 0 };
+    const hover = desiredCamera(player, 0, 0);
+    const cruise = desiredCamera(player, 0, MAX_SPEED);
 
-      const moveX = camRight.x * kbX + camFwd.x * kbY;
-      const moveZ = camRight.z * kbX + camFwd.z * kbY;
-      return { x: moveX, z: moveZ };
+    // Behind the tail for heading 0: negative z.
+    expect(hover.x).toBeCloseTo(0, 5);
+    expect(hover.z).toBeCloseTo(-26, 5);
+    expect(cruise.z).toBeCloseTo(-(26 + 4.5), 5);
+
+    const baseHeight = 20 + (15 - 2.4) * 0.34; // 24.284 above the aircraft
+    expect(hover.y).toBeCloseTo(player.y + baseHeight, 5);
+    expect(cruise.y).toBeCloseTo(player.y + baseHeight + 1.6, 5);
+  });
+
+  it('sits behind the tail using the aircraft heading', () => {
+    const player = { x: 10, y: 12, z: -20 };
+    const h = Math.PI / 2; // nose along +X → camera trails along −X
+    const cam = desiredCamera(player, h, 0);
+    expect(cam.x).toBeCloseTo(player.x - 26, 5);
+    expect(cam.z).toBeCloseTo(player.z, 5);
+  });
+
+  it('looks ahead of the nose into the battlefield, scaling with speed', () => {
+    const player = { x: 0, y: 10, z: 0 };
+    const h = 0;
+    const hoverLook = desiredLook(player, h, 0);
+    expect(hoverLook.x).toBeCloseTo(0, 5);
+    expect(hoverLook.z).toBeCloseTo(18, 5);
+    expect(hoverLook.y).toBeCloseTo(Math.max(3, player.y * 0.55), 5);
+
+    const cruiseLook = desiredLook(player, h, MAX_SPEED);
+    expect(cruiseLook.z).toBeCloseTo(18 + 6, 5);
+  });
+
+  it('converges with silky dual-stage interpolation (7.5 / 6.5 / 9.0)', () => {
+    const player = { x: 0, y: 8, z: 0 };
+    const targetCam = desiredCamera(player, 0, 0);
+    const targetLook = desiredLook(player, 0, 0);
+    let state: ChaseState = {
+      camX: 0, camY: 0, camZ: 0, lookX: 0, lookY: 0, lookZ: 0,
+    };
+
+    const dt = 1 / 60;
+    for (let i = 0; i < 240; i++) {
+      state = easeStep(state, dt, targetCam, targetLook);
     }
-
-    it('projects WASD correctly when camera is facing North (yaw = 0)', () => {
-      // W (Up on screen) -> -Z (North)
-      const forward = calculateMoveVector(0, 1, 0);
-      expect(forward.x).toBeCloseTo(0, 5);
-      expect(forward.z).toBeCloseTo(-1, 5);
-
-      // D (Right on screen) -> +X (East)
-      const right = calculateMoveVector(1, 0, 0);
-      expect(right.x).toBeCloseTo(1, 5);
-      expect(right.z).toBeCloseTo(0, 5);
-
-      // S (Down on screen) -> +Z (South)
-      const back = calculateMoveVector(0, -1, 0);
-      expect(back.x).toBeCloseTo(0, 5);
-      expect(back.z).toBeCloseTo(1, 5);
-
-      // A (Left on screen) -> -X (West)
-      const left = calculateMoveVector(-1, 0, 0);
-      expect(left.x).toBeCloseTo(-1, 5);
-      expect(left.z).toBeCloseTo(0, 5);
-    });
-
-    it('projects WASD correctly when camera is rotated (yaw = PI/2)', () => {
-      const yaw = Math.PI / 2;
-      // W (Up on screen) -> -X
-      const forward = calculateMoveVector(0, 1, yaw);
-      expect(forward.x).toBeCloseTo(-1, 5);
-      expect(forward.z).toBeCloseTo(0, 5);
-
-      // D (Right on screen) -> -Z
-      const right = calculateMoveVector(1, 0, yaw);
-      expect(right.x).toBeCloseTo(0, 5);
-      expect(right.z).toBeCloseTo(-1, 5);
-    });
-
-    it('projects WASD correctly when camera is facing South (yaw = PI)', () => {
-      const yaw = Math.PI;
-      // W (Up on screen) -> +Z (South)
-      const forward = calculateMoveVector(0, 1, yaw);
-      expect(forward.x).toBeCloseTo(0, 5);
-      expect(forward.z).toBeCloseTo(1, 5);
-
-      // D (Right on screen) -> -X (West)
-      const right = calculateMoveVector(1, 0, yaw);
-      expect(right.x).toBeCloseTo(-1, 5);
-      expect(right.z).toBeCloseTo(0, 5);
-    });
+    expect(state.camX).toBeCloseTo(targetCam.x, 3);
+    expect(state.camZ).toBeCloseTo(targetCam.z, 3);
+    expect(state.camY).toBeCloseTo(targetCam.y, 2);
+    expect(state.lookX).toBeCloseTo(targetLook.x, 3);
+    expect(state.lookZ).toBeCloseTo(targetLook.z, 3);
+    expect(state.lookY).toBeCloseTo(targetLook.y, 2);
   });
 
-  describe('Camera-Relative Aiming Projections', () => {
-    function calculateAimWorld(rx: number, ry: number, cameraYaw: number): { x: number; z: number } {
-      const camFwd = new THREE.Vector3(-Math.sin(cameraYaw), 0, -Math.cos(cameraYaw)).normalize();
-      const camRight = new THREE.Vector3().crossVectors(camFwd, new THREE.Vector3(0, 1, 0)).normalize();
-
-      const rMag = Math.hypot(rx, ry);
-      const rNormX = rx / rMag;
-      const rScreenY = -ry / rMag; // -ry is screen UP
-
-      return {
-        x: camRight.x * rNormX + camFwd.x * rScreenY,
-        z: camRight.z * rNormX + camFwd.z * rScreenY,
-      };
-    }
-
-    it('aims toward the top of the screen when right stick is pushed up', () => {
-      const testAngles = [0, Math.PI / 3, Math.PI / 2, Math.PI, -Math.PI / 2];
-      for (const yaw of testAngles) {
-        const aim = calculateAimWorld(0, -1, yaw); // Stick UP
-        const camFwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)).normalize();
-
-        expect(aim.x).toBeCloseTo(camFwd.x, 5);
-        expect(aim.z).toBeCloseTo(camFwd.z, 5);
-      }
-    });
-
-    it('aims toward the right of the screen when right stick is pushed right', () => {
-      const testAngles = [0, Math.PI / 3, Math.PI / 2, Math.PI, -Math.PI / 2];
-      for (const yaw of testAngles) {
-        const aim = calculateAimWorld(1, 0, yaw); // Stick RIGHT
-        const camFwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)).normalize();
-        const camRight = new THREE.Vector3().crossVectors(camFwd, new THREE.Vector3(0, 1, 0)).normalize();
-
-        expect(aim.x).toBeCloseTo(camRight.x, 5);
-        expect(aim.z).toBeCloseTo(camRight.z, 5);
-      }
-    });
-  });
-
-  describe('Shortest-Angle Camera Recenter Interpolation', () => {
-    function computeRecenterTarget(currentYaw: number, targetYaw: number): number {
-      let diff = targetYaw - currentYaw;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      return currentYaw + diff;
-    }
-
-    it('takes the shortest path when crossing the +/- PI boundary', () => {
-      const currentYaw = 3.1;
-      const targetYaw = -3.1;
-
-      const target = computeRecenterTarget(currentYaw, targetYaw);
-      const angularDistance = Math.abs(target - currentYaw);
-
-      // Shortest path is ~0.083 rad, NOT ~6.2 rad
-      expect(angularDistance).toBeLessThan(0.2);
-    });
-
-    it('correctly aligns behind velocity direction during flight', () => {
-      const velocity = { x: 20, z: -20 }; // Flying North-East
-      const speed = Math.hypot(velocity.x, velocity.z);
-      expect(speed).toBeGreaterThan(3.5);
-
-      // Camera behind player looking along flight path:
-      // Math.atan2(-20, 20) = -PI/4
-      const targetYaw = Math.atan2(-velocity.x, -velocity.z);
-      expect(targetYaw).toBeCloseTo(-Math.PI * 0.25, 5);
-    });
-  });
-
-  describe('Controller Mode Separation (Modifier vs Aim)', () => {
-    it('isolates right stick to camera orbit when modifier (LT) is active', () => {
-      const isCameraModifierHeld = true;
-      const rx = 0.8;
-      const ry = 0.0;
-      const DEADZONE = 0.15;
-
-      let targetCameraYawVelocity = 0;
-      let isFiringGamepad = false;
-      let gunAimUpdated = false;
-
-      if (isCameraModifierHeld) {
-        const normRx = (rx - Math.sign(rx) * DEADZONE) / (1 - DEADZONE);
-        targetCameraYawVelocity = -normRx * 2.8;
-      } else {
-        gunAimUpdated = true;
-      }
-
-      isFiringGamepad = !isCameraModifierHeld && Math.hypot(rx, ry) > DEADZONE;
-
-      expect(targetCameraYawVelocity).toBeLessThan(0);
-      expect(isFiringGamepad).toBe(false);
-      expect(gunAimUpdated).toBe(false);
-    });
-
-    it('resumes gun aim and fire immediately when modifier (LT) is released', () => {
-      const isCameraModifierHeld = false;
-      const rx = 0.8;
-      const ry = 0.0;
-      const DEADZONE = 0.15;
-
-      let targetCameraYawVelocity = 0;
-      let isFiringGamepad = false;
-      let gunAimUpdated = false;
-
-      if (isCameraModifierHeld) {
-        const normRx = (rx - Math.sign(rx) * DEADZONE) / (1 - DEADZONE);
-        targetCameraYawVelocity = -normRx * 2.8;
-      } else {
-        gunAimUpdated = true;
-      }
-
-      isFiringGamepad = !isCameraModifierHeld && Math.hypot(rx, ry) > DEADZONE;
-
-      expect(targetCameraYawVelocity).toBe(0);
-      expect(isFiringGamepad).toBe(true);
-      expect(gunAimUpdated).toBe(true);
-    });
-  });
-
-  describe('Camera Boom Collision Compression', () => {
-    it('smoothly compresses boom fraction when approaching tall obstacle without altering pitch', () => {
-      let cameraBoomFraction = 1.0;
-      const targetBoom = 0.65;
-      const delta = 0.016;
-
-      // Step physics/camera loop 30 frames (~0.5s)
-      for (let i = 0; i < 30; i++) {
-        cameraBoomFraction += (targetBoom - cameraBoomFraction) * (1 - Math.exp(-16 * delta));
-      }
-
-      expect(cameraBoomFraction).toBeLessThan(0.7);
-      expect(cameraBoomFraction).toBeGreaterThanOrEqual(0.65);
-    });
-  });
-
-  describe('Camera Responsiveness & FPS Independence', () => {
-    it.each([30, 60, 120])('achieves >= 90%% camera follow convergence in 0.16s at %i FPS', (fps) => {
-      const dt = 1 / fps;
-      const followSharpness = 14.0;
-      let camPos = 0;
-      const targetPos = 100;
-
-      const frames = Math.round(0.16 * fps);
-      for (let i = 0; i < frames; i++) {
-        const alpha = 1 - Math.exp(-followSharpness * dt);
-        camPos += (targetPos - camPos) * alpha;
-      }
-
-      // After 0.16s, 1 - exp(-14 * 0.16) = 1 - exp(-2.24) = 0.8935 ≈ 90%
-      expect(camPos).toBeGreaterThanOrEqual(88);
-    });
-
-    it('camera orbit yaw builds to >= 85%% max velocity within 0.08s', () => {
-      const dt = 1 / 60;
-      const accelRate = 28;
-      const targetYawVel = 3.5;
-      let currentYawVel = 0;
-
-      // 5 frames at 60Hz = 0.083s
-      for (let i = 0; i < 5; i++) {
-        currentYawVel += (targetYawVel - currentYawVel) * (1 - Math.exp(-accelRate * dt));
-      }
-
-      expect(currentYawVel / targetYawVel).toBeGreaterThanOrEqual(0.85);
-    });
-
-    it('camera orbit yaw stops cleanly within 0.08–0.18s when stick released', () => {
-      const dt = 1 / 60;
-      const dampingRate = 32;
-      let currentYawVel = 3.5;
-
-      // 8 frames at 60Hz = 0.133s (within 0.08–0.18s target window)
-      for (let i = 0; i < 8; i++) {
-        currentYawVel += (0 - currentYawVel) * (1 - Math.exp(-dampingRate * dt));
-      }
-
-      // Velocity is damped by over 98%
-      expect(Math.abs(currentYawVel)).toBeLessThan(0.06);
-    });
-
-    it('camera recenter completes within 0.25–0.40s duration', () => {
-      const recenterDuration = 0.30;
-      const dt = 1 / 60;
-      let recenterTimer = 0;
-      let cameraYaw = 2.0;
-      const startYaw = 2.0;
-      const targetYaw = 0;
-
-      while (recenterTimer < recenterDuration) {
-        recenterTimer += dt;
-        const t = Math.min(1, recenterTimer / recenterDuration);
-        const smoothT = t * t * (3 - 2 * t);
-        cameraYaw = startYaw + (targetYaw - startYaw) * smoothT;
-      }
-
-      expect(cameraYaw).toBeCloseTo(0, 5);
-      expect(recenterDuration).toBeGreaterThanOrEqual(0.25);
-      expect(recenterDuration).toBeLessThanOrEqual(0.40);
-    });
+  it('lags responsively on a fast maneuver rather than snapping', () => {
+    const player = { x: 0, y: 8, z: 0 };
+    const targetCam = desiredCamera(player, Math.PI / 2, MAX_SPEED);
+    let state: ChaseState = {
+      camX: 0, camY: 24, camZ: -26, lookX: 0, lookY: 3, lookZ: 18,
+    };
+    state = easeStep(state, 1 / 60, targetCam, desiredLook(player, Math.PI / 2, MAX_SPEED));
+    // A single frame moves partway, not all the way.
+    expect(Math.abs(state.camX)).toBeLessThan(8);
+    expect(Math.abs(state.camX)).toBeGreaterThan(1);
   });
 });

@@ -271,14 +271,14 @@ function formatDistance(meters: number): string {
 }
 
 const CONTROL_HINTS: { keys: string; label: string }[] = [
-  { keys: 'W A S D', label: 'Move' },
-  { keys: 'HOLD LEFT MOUSE', label: 'Fire Machine Gun' },
-  { keys: 'MIDDLE DRAG / LT+R-STICK', label: '360° Camera Orbit' },
-  { keys: 'R3 / T', label: 'Recenter Camera' },
-  { keys: 'SPACE / ALT', label: 'Climb / Descend' },
-  { keys: 'SHIFT', label: 'Afterburner' },
-  { keys: 'C', label: 'Deploy Flares' },
-  { keys: 'E', label: 'Devastation' },
+  { keys: 'A / D', label: 'Yaw — rotate heading' },
+  { keys: 'W / S', label: 'Thrust forward / reverse' },
+  { keys: 'Q / E', label: 'Lateral strafe' },
+  { keys: 'SHIFT / SPACE / CTRL', label: 'Climb / Descend' },
+  { keys: 'MOUSE', label: 'Aim gun (ground cursor)' },
+  { keys: 'HOLD LEFT MOUSE', label: 'Fire' },
+  { keys: 'HOLD RIGHT MOUSE', label: 'Salvo target lock' },
+  { keys: 'C', label: 'Flares' },
 ];
 
 /** Contextual onboarding: a short fading hint sequence after each run starts.
@@ -1637,15 +1637,16 @@ function ThreeDMenu({
 }
 
 const HOW_TO_PLAY_CONTROLS: { keys: string; label: string }[] = [
-  { keys: 'W A S D', label: 'Move the helicopter' },
-  { keys: 'MOUSE', label: 'Aim' },
+  { keys: 'A / D (←/→)', label: 'Rudder yaw — rotate the heading' },
+  { keys: 'W / S (↑/↓)', label: 'Thrust forward / reverse along the heading' },
+  { keys: 'Q / E', label: 'Lateral cyclic strafe' },
+  { keys: 'SHIFT / SPACE / CTRL', label: 'Climb / Descend (within the 2.4–26 m band)' },
+  { keys: 'MOUSE', label: 'Aim the chin turret — independent of your heading' },
   { keys: 'HOLD LEFT MOUSE', label: 'Fire the machine gun' },
-  { keys: 'SPACE / ALT', label: 'Climb / Descend' },
-  { keys: 'SHIFT', label: 'Afterburner — extra speed, burns fuel' },
-  { keys: 'HOLD Q / RIGHT MOUSE', label: 'Lock Salvo — paint targets, release to launch' },
+  { keys: 'HOLD RIGHT MOUSE', label: 'Salvo — paint up to 6 locks, release to launch' },
   { keys: 'C', label: 'Flares — break incoming missile locks' },
-  { keys: 'E', label: 'Devastation — press when the meter is full' },
   { keys: '1–4 / WHEEL', label: 'Switch weapons' },
+  { keys: 'R', label: 'Reload' },
   { keys: 'ESC / P', label: 'Pause' },
   { keys: 'ENTER', label: 'Quick restart from the results screen' },
 ];
@@ -1973,41 +1974,8 @@ function SettingsPanel({
 
               <div className="setting-row">
                 <div>
-                  <div className="setting-label">CAMERA ORBIT SPEED</div>
-                  <div className="setting-desc">Middle mouse & LT + Right Stick 360° orbit sensitivity</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="setting-value">{(settings.cameraSensitivity ?? 1.0).toFixed(1)}x</span>
-                  <input
-                    type="range"
-                    min={0.4}
-                    max={3.0}
-                    step={0.1}
-                    value={settings.cameraSensitivity ?? 1.0}
-                    onChange={(e) => onChange({ cameraSensitivity: Number(e.target.value) })}
-                    className="slider-arcade w-28"
-                    aria-label="Camera orbit sensitivity"
-                  />
-                </div>
-              </div>
-
-              <div className="setting-row">
-                <div>
-                  <div className="setting-label">CAMERA FOLLOW MODE</div>
-                  <div className="setting-desc">Free = stay where rotated · Soft = slow auto-realign · Fixed = legacy locked</div>
-                </div>
-                <div className="flex gap-1.5">
-                  {(['free', 'soft', 'fixed'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => { onUiSound(); onChange({ cameraFollowMode: mode }); }}
-                      aria-pressed={(settings.cameraFollowMode ?? 'free') === mode}
-                      className={`seg-btn ${(settings.cameraFollowMode ?? 'free') === mode ? 'seg-on' : ''}`}
-                    >
-                      {mode.toUpperCase()}
-                    </button>
-                  ))}
+                  <div className="setting-label">TRAILING CHASE CAMERA</div>
+                  <div className="setting-desc">Tail-locked behind the heading · pulls back and rises with speed · dynamic forward lookahead</div>
                 </div>
               </div>
 
@@ -3794,7 +3762,7 @@ export default function App() {
                   <div className="flex items-center gap-1.5 border-l border-[#3d4a30] pl-2.5">
                     <Zap size={12} className={superInfo.ready ? 'text-[#ffcc00]' : 'text-[#a89d7c]'} />
                     {superInfo.ready ? (
-                      <span className="font-military text-xs text-[#ffcc00] animate-pulse">SUPER READY (E)</span>
+                      <span className="font-military text-xs text-[#ffcc00] animate-pulse">SUPER READY — CLICK</span>
                     ) : (
                       <span className="font-tech text-xs text-[#ded6be]">SUPER {Math.round(superInfo.charge)}%</span>
                     )}

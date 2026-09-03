@@ -159,6 +159,53 @@ export const MOVEMENT_CONFIG = {
 } as const;
 
 /**
+ * FLIGHT_SPEC — heading-relative attack-helicopter flight controller.
+ * Arcade-tuned: brisk cruise, snappy thrust and yaw, momentum glide on drag.
+ *  • Rudder A/D (←/→) yaws the heading at up to ~2.6 rad/s with smooth
+ *    angular acceleration and deceleration damping.
+ *  • W/S thrusts along `forwardVector = (sin h, 0, cos h)`; Q/E strafes along
+ *    the aircraft's TRUE right vector = (−cos h, 0, sin h) — three.js is
+ *    right-handed, so the classic (cos h, 0, −sin h) is actually the LEFT
+ *    side of a nose facing +Z. Cruise caps at 34 u/s.
+ *  • Shift climbs at 9.5 u/s, Ctrl sinks at 8.0 u/s; altitude is clamped to
+ *    a 2.4 m ground cushion / 26 m ceiling above the underlying surface.
+ *  • Linear momentum glides on exponential drag `v *= exp(-drag*dt)`.
+ *  • Mesh pose (Euler order YXZ = Ry→Rx→Rz): pitch = ±0.32 rad (~18°),
+ *    roll = ±0.48 rad (~28°), both eased with `1 - exp(-12*dt)`.
+ */
+export const FLIGHT_SPEC = {
+  /** Max cruise speed (u/s). */
+  maxForwardSpeed: 34,
+  /** Cyclic thrust / lateral-strafe acceleration (u/s²) toward the cap — the
+   *  cap (not drag) is what governs cruise, so response is immediate. */
+  forwardAccel: 120,
+  /** Exponential drag coefficient (/s): velocity *= exp(-drag * dt). */
+  drag: 1.35,
+  /** Rudder turn rate cap (rad/s, ~149°/s). */
+  turnRate: 2.6,
+  /** Angular smoothing (/s) while yaw is held vs. after release. */
+  yawAccelResponse: 14.0,
+  yawDecelResponse: 10.0,
+  /** Collective climb (+) / sink (−) rates (u/s). */
+  climbRate: 9.5,
+  sinkRate: 8.0,
+  /** Vertical acceleration (u/s²) — how fast the collective rate is reached. */
+  verticalAccel: 110,
+  /** Strict altitude envelope above the underlying surface (u). */
+  groundCushion: 2.4,
+  ceiling: 26.0,
+  /** Spawn altitude (u) — mid-band so climb AND descend both have room and
+   *  respond the instant a run starts (spawning at `ceiling` made the
+   *  collective feel dead: holding climb was clamped to nothing). */
+  spawnAltitude: 15.0,
+  /** Aero tilt limits (rad): nose-down ~18° max pitch, ~28° max bank. */
+  maxPitch: 0.32,
+  maxRoll: 0.48,
+  /** Pitch/roll ease response (/s) — lerp(current, target, 1 - exp(-10dt)). */
+  tiltResponse: 12.0,
+} as const;
+
+/**
  * Per-model handling profiles — the Hangar choice is more than paint. Warlock
  * flies heavy (slower, wider turns, deeper bank), Nighthawk is light and agile
  * (faster, snappier, shallower bank). Multipliers scale the shared arcade
@@ -190,10 +237,14 @@ const HOVER_SPRING = {
  * multiplier (1 when inactive).
  */
 export interface MovementCommand {
+  /** Lateral cyclic strafe -1..1 (+1 = strafe right, E / gamepad stick right). */
   x: number;
+  /** Cyclic thrust -1..1 (+1 = accelerate along heading, W / up; −1 = reverse, S). */
   z: number;
+  /** Collective vertical -1..1 (+1 = climb, Shift; −1 = descend, Ctrl). */
   y: number;
-  afterburner: number;
+  /** Rudder yaw -1..1 (+1 = turn right, D / →). */
+  yaw: number;
   /** Subtle 0..1 load factor supplied by the cargo system (1 without cargo). */
   cargoMultiplier?: number;
 }
@@ -262,7 +313,7 @@ export class Helicopter extends Entity {
   engineHealth: number = 100;
   hoverFloor: number = 0;
   smoothedHoverFloor: number = 0;
-  aimPosition: THREE.Vector3 = new THREE.Vector3(0, 26, -30);
+  aimPosition: THREE.Vector3 = new THREE.Vector3(0, FLIGHT_SPEC.spawnAltitude, -30);
 
   // Body yaw angular velocity (rad/s)
   bodyYawVelocity: number = 0;
@@ -284,8 +335,8 @@ export class Helicopter extends Entity {
   constructor(scene: THREE.Scene, world: CANNON.World, model: HelicopterModel = HelicopterModel.APACHE) {
     super(scene, world);
     this.model = model;
-    this.targetPosition = new THREE.Vector3(0, 26, 0);
-    this.lastTargetPosition = new THREE.Vector3(0, 26, 0);
+    this.targetPosition = new THREE.Vector3(0, FLIGHT_SPEC.spawnAltitude, 0);
+    this.lastTargetPosition = new THREE.Vector3(0, FLIGHT_SPEC.spawnAltitude, 0);
 
     const baseGroup = new THREE.Group();
 
@@ -431,7 +482,7 @@ export class Helicopter extends Entity {
     this.body = new CANNON.Body({
       mass: 5,
       type: CANNON.Body.DYNAMIC,
-      position: new CANNON.Vec3(0, 26, 0),
+      position: new CANNON.Vec3(0, FLIGHT_SPEC.spawnAltitude, 0),
       linearDamping: 0, // The arcade controller is the sole owner of linear damping.
       angularDamping: 0.9,
       collisionFilterGroup: COLLISION.PLAYER,
@@ -1004,17 +1055,209 @@ export class Helicopter extends Entity {
     this.impulseVelocity.set(0, 0);
     this.gunYawPivot.rotation.y = 0;
     this.gunPitchPivot.rotation.x = 0;
-    this.targetPosition.set(0, 26, 0);
-    this.lastTargetPosition.set(0, 26, 0);
-    this.aimPosition.set(0, 26, -30);
-    this.body.position.set(0, 26, 0);
+    this.targetPosition.set(0, FLIGHT_SPEC.spawnAltitude, 0);
+    this.lastTargetPosition.set(0, FLIGHT_SPEC.spawnAltitude, 0);
+    this.aimPosition.set(0, FLIGHT_SPEC.spawnAltitude, -30);
+    this.body.position.set(0, FLIGHT_SPEC.spawnAltitude, 0);
     this.body.velocity.set(0, 0, 0);
     this.body.angularVelocity.set(0, 0, 0);
     this.body.force.set(0, 0, 0);
     this.body.torque.set(0, 0, 0);
-    this.mesh.position.set(0, 26, 0);
+    this.mesh.position.set(0, FLIGHT_SPEC.spawnAltitude, 0);
     this.mesh.rotation.set(0, 0, 0);
     this.mesh.visible = true; // the death explosion hides the wreck — restore on restart
+  }
+
+  /** Horizontal speed (u/s) reported by the flight controller — drives rotor
+   *  animation and the trailing chase camera's speed ratio. */
+  lastHorizSpeed: number = 0;
+
+  /**
+   * Heading-relative arcade flight core (FLIGHT_SPEC). Separates the logical
+   * flight state (heading + momentum + altitude) from the visual airframe
+   * pose: the mesh Euler order is YXZ, i.e. exactly
+   *   RotationY(playerHeading) → RotationX(playerPitch) → RotationZ(playerRoll)
+   * with pitch/roll eased toward their targets at `1 - exp(-10 * dt)`.
+   */
+  private applyHeadingRelativeFlight(
+    time: number,
+    delta: number,
+    move?: MovementCommand,
+    engineEff: number = 1,
+    rotorEff: number = 1,
+  ) {
+    const S = FLIGHT_SPEC;
+    const body = this.body;
+
+    // Inputs are heading-relative: rudder +1 turns right (D/→), x +1 strafes
+    // right (E), z +1 thrusts forward along heading (W/↑), y +1 climbs (Shift).
+    const rudder = THREE.MathUtils.clamp(move?.yaw ?? 0, -1, 1);
+    const strafe = THREE.MathUtils.clamp(move?.x ?? 0, -1, 1);
+    const thrust = THREE.MathUtils.clamp(move?.z ?? 0, -1, 1);
+    const vert = THREE.MathUtils.clamp(move?.y ?? 0, -1, 1);
+    const cargo = move?.cargoMultiplier ?? 1;
+
+    // Heading frame. forwardVector = (sin h, 0, cos h) matches the mesh's own
+    // rotation.y, so increasing the heading swings the nose LEFT (three.js is
+    // right-handed; the +Z nose's right side is −X). The aircraft's true
+    // right/strafe vector is therefore (−cos h, 0, sin h).
+    let heading = this.mesh.rotation.y;
+    const cy = Math.cos(heading);
+    const sy = Math.sin(heading);
+    const fwdX = sy;
+    const fwdZ = cy;
+    const rightX = -cy;
+    const rightZ = sy;
+
+    // ---- Rudder yaw with smooth angular acceleration / deceleration ------
+    // Rudder input is +1 = turn RIGHT (D), and heading velocity is positive
+    // when turning LEFT — so the demand is negated.
+    const yawDemand = -rudder * S.turnRate * rotorEff;
+    const yawResp = Math.abs(rudder) > 0.001 ? S.yawAccelResponse : S.yawDecelResponse;
+    this.bodyYawVelocity += (yawDemand - this.bodyYawVelocity) * (1 - Math.exp(-yawResp * delta));
+    if (Math.abs(rudder) < 0.001 && Math.abs(this.bodyYawVelocity) < 0.006) {
+      this.bodyYawVelocity = 0;
+    }
+    heading += this.bodyYawVelocity * delta;
+    while (heading > Math.PI) heading -= Math.PI * 2;
+    while (heading < -Math.PI) heading += Math.PI * 2;
+
+    // ---- Cyclic propulsion + lateral strafe with linear momentum drag -----
+    // demand = normalized (thrust·fwd + strafe·right) clamped to unit circle.
+    let demandX = fwdX * thrust + rightX * strafe;
+    let demandZ = fwdZ * thrust + rightZ * strafe;
+    let demandMag = Math.hypot(thrust, strafe);
+    if (demandMag > 1.0001) {
+      const k = 1 / demandMag;
+      demandX *= k;
+      demandZ *= k;
+      demandMag = 1;
+    }
+
+    let vx = body.velocity.x * Math.exp(-S.drag * delta);
+    let vz = body.velocity.z * Math.exp(-S.drag * delta);
+    if (demandMag > 0.001) {
+      const accel = S.forwardAccel * engineEff * cargo;
+      vx += demandX * accel * delta;
+      vz += demandZ * accel * delta;
+    }
+
+    // External knockback (explosion blasts) rides on top and decays itself.
+    if (this.impulseVelocity.x !== 0 || this.impulseVelocity.y !== 0) {
+      vx += this.impulseVelocity.x * delta;
+      vz += this.impulseVelocity.y * delta;
+      this.impulseVelocity.multiplyScalar(Math.exp(-Helicopter.IMPULSE_DECAY * delta));
+      if (Math.abs(this.impulseVelocity.x) < 0.05 && Math.abs(this.impulseVelocity.y) < 0.05) {
+        this.impulseVelocity.set(0, 0);
+      }
+    }
+
+    // Hard cruise clamp at the spec top speed.
+    const horizSpeed = Math.hypot(vx, vz);
+    if (horizSpeed > S.maxForwardSpeed) {
+      const k = S.maxForwardSpeed / horizSpeed;
+      vx *= k;
+      vz *= k;
+    }
+    body.velocity.x = vx;
+    body.velocity.z = vz;
+    this.desiredVelocity.x = vx;
+    this.desiredVelocity.z = vz;
+    this.lastHorizSpeed = Math.hypot(vx, vz);
+
+    // ---- Collective vertical lift: Shift +9.5 u/s, Ctrl −8.0 u/s ----------
+    let targetVy =
+      vert > 0 ? S.climbRate * vert : vert < 0 ? S.sinkRate * vert : 0;
+    targetVy *= engineEff * cargo;
+    const vyStep = S.verticalAccel * delta;
+    body.velocity.y += THREE.MathUtils.clamp(targetVy - body.velocity.y, -vyStep, vyStep);
+    if (vert === 0 && Math.abs(body.velocity.y) <= vyStep) body.velocity.y = 0;
+
+    // Terrain-following envelope (smoothed hover floor = ground or rooftop
+    // beneath the hull): strictly [floor + 2.4 m, floor + 26 m].
+    this.smoothedHoverFloor +=
+      (this.hoverFloor - this.smoothedHoverFloor) *
+      (1 - Math.exp(-(this.hoverFloor > this.smoothedHoverFloor ? 12 : 9) * delta));
+    const minY = this.smoothedHoverFloor + S.groundCushion;
+    const maxY = this.smoothedHoverFloor + S.ceiling;
+    let py = body.position.y;
+    if (py <= minY) {
+      py = minY;
+      if (body.velocity.y < 0) body.velocity.y = 0;
+    } else if (py >= maxY) {
+      py = maxY;
+      if (body.velocity.y > 0) body.velocity.y = 0;
+    }
+    body.position.y = py;
+    this.desiredVelocity.y = body.velocity.y;
+
+    // ---- Aerodynamic tilting (visual only; logical state stays above) -----
+    // pitch: accelerating forward (+thrust) drops the nose; braking/reverse
+    // raises it. roll: banks into the turn and into strafes (euler −z = right
+    // bank). Heavy-weapon recoil kick (firePitchImpulse) adds a nose bob.
+    const pitchTarget = THREE.MathUtils.clamp(
+      thrust * S.maxPitch + this.firePitchImpulse,
+      -S.maxPitch,
+      S.maxPitch,
+    );
+    // Bank into the lateral demand: positive euler roll (z) tips the aircraft
+    // up toward its OWN right side, so a right turn / right strafe banks right.
+    const lateralDemand = THREE.MathUtils.clamp(rudder + strafe, -1, 1);
+    const rollTarget = THREE.MathUtils.clamp(
+      lateralDemand * S.maxRoll,
+      -S.maxRoll,
+      S.maxRoll,
+    );
+    const tiltK = 1 - Math.exp(-S.tiltResponse * delta);
+    this.mesh.rotation.x += (pitchTarget - this.mesh.rotation.x) * tiltK;
+    this.mesh.rotation.z += (rollTarget - this.mesh.rotation.z) * tiltK;
+    this.mesh.rotation.y = heading;
+
+    // Sync the presentation root to the kinematic body before world.step.
+    this.mesh.position.set(body.position.x, body.position.y, body.position.z);
+
+    // ---- Rotating chin gun turret (decoupled gimbal) ----------------------
+    // Tracks gunAimTarget (auto-aim / mouse ground cursor) while the airframe
+    // keeps flying its own heading — pilot flies one way, fires another.
+    const trackingSpeed = Helicopter.GUN_TRACKING_SPEED * delta;
+    if (this.gunAimMode) {
+      this.mesh.updateWorldMatrix(true, false);
+      this.gunTargetLocal.copy(this.gunAimTarget);
+      this.mesh.worldToLocal(this.gunTargetLocal);
+      this.gunTargetLocal.sub(this.gunYawPivot.position);
+      let yawTarget = Math.max(
+        Helicopter.GUN_YAW_MIN,
+        Math.min(Helicopter.GUN_YAW_MAX, Math.atan2(this.gunTargetLocal.x, this.gunTargetLocal.z)),
+      );
+      let yawDiff = yawTarget - this.gunYawPivot.rotation.y;
+      while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+      while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+      this.gunYawPivot.rotation.y += Math.min(Math.abs(yawDiff), trackingSpeed) * Math.sign(yawDiff);
+
+      this.gunYawPivot.updateWorldMatrix(true, false);
+      this.gunTargetLocal.copy(this.gunAimTarget);
+      this.gunYawPivot.worldToLocal(this.gunTargetLocal);
+      const gHoriz = Math.max(0.001, Math.hypot(this.gunTargetLocal.x, this.gunTargetLocal.z));
+      const pitchTargetGun = THREE.MathUtils.clamp(
+        -Math.atan2(this.gunTargetLocal.y, gHoriz),
+        Helicopter.GUN_PITCH_MIN,
+        Helicopter.GUN_PITCH_MAX,
+      );
+      const pitchDiff = pitchTargetGun - this.gunPitchPivot.rotation.x;
+      this.gunPitchPivot.rotation.x +=
+        Math.min(Math.abs(pitchDiff), trackingSpeed * 0.8) * Math.sign(pitchDiff);
+    } else {
+      const yawReturnSpeed = trackingSpeed * 0.6;
+      this.gunYawPivot.rotation.y +=
+        Math.min(Math.abs(this.gunYawPivot.rotation.y), yawReturnSpeed) *
+        -Math.sign(this.gunYawPivot.rotation.y);
+      this.gunPitchPivot.rotation.x +=
+        Math.min(Math.abs(this.gunPitchPivot.rotation.x), yawReturnSpeed * 0.8) *
+        -Math.sign(this.gunPitchPivot.rotation.x);
+    }
+
+    // Visual recoil springs (MG barrel kick, heavy-weapon nose bob).
+    this.updateFireFeedback(delta);
   }
 
   update(
@@ -1130,17 +1373,27 @@ export class Helicopter extends Entity {
       }
     }
 
-    // ---- Phase 2: velocity-based arcade movement -------------------------
-    // Input (world-space, normalized 0..1) → desired velocity → accelerate the
-    // ---- Arcade Velocity & Drag Momentum Model ---------------------------
-    // INPUT -> THRUST -> PERSISTENT VELOCITY -> FRAME-INDEPENDENT DRAG -> MAX SPEED CLAMP -> POSITION
+    // ---- Heading-relative arcade flight controller (FLIGHT_SPEC) ---------
+    this.applyHeadingRelativeFlight(time, delta, move, engineEff, rotorEff);
+
+    // Rotor / nav-light animation always follows the live flight path.
+    this.animateRotors(this.lastHorizSpeed, FLIGHT_SPEC.maxForwardSpeed, delta);
+    this.updateNavLights(time);
+
+    /* ---------------------------------------------------------------------
+     * Legacy Phase-2 model (camera-relative velocity-drag momentum + spring
+     * auto-heading yaw, Space/Alt vertical) — replaced by the heading-
+     * relative FLIGHT_SPEC controller above. Kept compiled as reference;
+     * the guard below never evaluates to true.
+     * ------------------------------------------------------------------- */
+    if (false) {
     const cfg = MOVEMENT_CONFIG;
     const profile = MODEL_MOVEMENT[this.model];
     const moveX = move?.x ?? 0;
     const moveZ = move?.z ?? 0;
     const moveY = move?.y ?? 0;
     const cargoMultiplier = move?.cargoMultiplier ?? 1;
-    const isAfterburner = (move?.afterburner ?? 1) > 1;
+    const isAfterburner = false; // retired by the FLIGHT_SPEC schema
 
     let vx = this.body.velocity.x;
     let vz = this.body.velocity.z;
@@ -1478,6 +1731,7 @@ export class Helicopter extends Entity {
 
     this.animateRotors(currentHorizSpeed, 80, delta);
     this.updateNavLights(time);
+    } // -- end legacy Phase-2 (unreachable) block --
   }
 
   /**

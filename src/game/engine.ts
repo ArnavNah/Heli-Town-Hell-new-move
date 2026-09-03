@@ -82,7 +82,7 @@ const NEUTRAL_GRADE = { r: 1, g: 1, b: 1, exposure: 1, saturation: 1 };
 
 import { AudioManager } from "../audio";
 import { createBlobShadow, createGlowMaterial, createSkyDome, disposeObject3D } from "./materials";
-import { Enemy, Helicopter, MOVEMENT_CONFIG, Objective, PowerUp, Projectile, ProjectilePool } from "./entities";
+import { Enemy, FLIGHT_SPEC, Helicopter, MOVEMENT_CONFIG, Objective, PowerUp, Projectile, ProjectilePool } from "./entities";
 import { CityEnvironment } from "./city";
 import {
   DeliveryState,
@@ -234,15 +234,15 @@ const TOUCH_DEADZONE = 0.15;
 /** First-run tutorial beats — one action at a time, each with a generous
  *  auto-advance so the tutorial can never soft-lock a run. */
 const TUTORIAL_STEPS: { id: string; title: string; desc: string; autoSeconds: number }[] = [
-  { id: "move", title: "MOVE", desc: "Fly with W A S D", autoSeconds: 14 },
-  { id: "aim", title: "AIM", desc: "Move the mouse to aim", autoSeconds: 10 },
+  { id: "move", title: "MOVE", desc: "Fly with A/D yaw, W/S thrust and Q/E strafe", autoSeconds: 16 },
+  { id: "aim", title: "AIM", desc: "Move the mouse to aim the chin gun", autoSeconds: 10 },
   { id: "fire", title: "FIRE", desc: "Hold LEFT MOUSE to fire the machine gun", autoSeconds: 12 },
-  { id: "climb", title: "CLIMB", desc: "Hold SPACE to climb", autoSeconds: 8 },
-  { id: "descend", title: "DESCEND", desc: "Hold ALT to descend", autoSeconds: 8 },
+  { id: "climb", title: "CLIMB", desc: "Hold SHIFT or SPACE to climb", autoSeconds: 8 },
+  { id: "descend", title: "DESCEND", desc: "Hold CTRL to descend", autoSeconds: 8 },
   { id: "dodge", title: "EVADE", desc: "Incoming fire — dodge the tracer!", autoSeconds: 7 },
   { id: "flares", title: "FLARES", desc: "Press C to deploy countermeasure flares", autoSeconds: 10 },
-  { id: "salvo", title: "LOCK SALVO", desc: "Hold Q (or RIGHT MOUSE) to paint locks, release to fire", autoSeconds: 12 },
-  { id: "devastation", title: "DEVASTATION", desc: "Press E when the Devastation meter is full", autoSeconds: 6 },
+  { id: "salvo", title: "LOCK SALVO", desc: "Hold RIGHT MOUSE to paint locks, release to fire", autoSeconds: 12 },
+  { id: "devastation", title: "DEVASTATION", desc: "Trigger the Devastation super when the meter is full", autoSeconds: 6 },
   { id: "pause", title: "PAUSE", desc: "Press ESC or P to pause", autoSeconds: 8 },
 ];
 
@@ -328,7 +328,7 @@ export class GameEngine {
   movementKeys: Set<string> = new Set();
   leftStick: StickInput = { x: 0, y: 0, active: false };
   rightStick: StickInput = { x: 0, y: 0, active: false };
-  movementTarget: THREE.Vector3 = new THREE.Vector3(0, 26, 0);
+  movementTarget: THREE.Vector3 = new THREE.Vector3(0, FLIGHT_SPEC.spawnAltitude, 0);
   keyboardVelocity: THREE.Vector2 = new THREE.Vector2(0, 0);
   hasInputThisFrame: boolean = false;
 
@@ -340,12 +340,18 @@ export class GameEngine {
   private lowFuelWarned = false;
   private lowHullWarned = false;
 
-  // Phase 2: vertical input -1..1 (Space/Alt) with lerp smoothing; gamepad stick
-  // movement (non-touch) fed into updateKeyboardMovement for consistant normalization.
+  // Heading-relative flight input: yawInput = rudder (+1 right), keyboardVelocity
+  // x/y = lateral strafe / cyclic thrust (+1 right / forward), verticalInput =
+  // collective (+1 climb Shift / −1 descend Ctrl). Pad/touch analogs merge in
+  // updateKeyboardMovement; gamepadMove x/z hold analog rudder/thrust, and
+  // gamepadStrafe / gamepadVert carry D-pad strafe and collective.
+  yawInput: number = 0;
   verticalInput: number = 0;
   gamepadMove: { x: number; z: number } = { x: 0, z: 0 };
-  aimPoint: THREE.Vector3 = new THREE.Vector3(0, 26, -35);
-  mouseAimPoint: THREE.Vector3 = new THREE.Vector3(0, 26, -55);
+  gamepadStrafe: number = 0;
+  gamepadVert: number = 0;
+  aimPoint: THREE.Vector3 = new THREE.Vector3(0, FLIGHT_SPEC.spawnAltitude, -35);
+  mouseAimPoint: THREE.Vector3 = new THREE.Vector3(0, FLIGHT_SPEC.spawnAltitude, -55);
   mouseAimValid: boolean = false;
   autoAimTarget: Enemy | Objective | null = null;
   lastCollisionDamageTime = 0;
@@ -1000,7 +1006,7 @@ export class GameEngine {
 
     // Dynamic Crosshair Reticle
     this.targetGroup = new THREE.Group();
-    this.targetGroup.position.set(this.aimPoint.x, 26.2, this.aimPoint.z);
+    this.targetGroup.position.set(this.aimPoint.x, FLIGHT_SPEC.spawnAltitude + 0.2, this.aimPoint.z);
     this.targetGroup.visible = false;
 
     const ringMat = new THREE.MeshBasicMaterial({
@@ -1217,13 +1223,13 @@ export class GameEngine {
     this.floatingCombatText.clear();
 
     this.helicopter.reset();
-    this.movementTarget.set(0, 26, 0);
+    this.movementTarget.set(0, FLIGHT_SPEC.spawnAltitude, 0);
     this.keyboardVelocity.set(0, 0);
     this.hasInputThisFrame = false;
-    this.aimPoint.set(0, 26, -35);
-    this.mouseAimPoint.set(0, 26, -55);
+    this.aimPoint.set(0, FLIGHT_SPEC.spawnAltitude, -35);
+    this.mouseAimPoint.set(0, FLIGHT_SPEC.spawnAltitude, -55);
     this.mouseAimValid = false;
-    this.targetGroup.position.set(this.aimPoint.x, 26.2, this.aimPoint.z);
+    this.targetGroup.position.set(this.aimPoint.x, FLIGHT_SPEC.spawnAltitude + 0.2, this.aimPoint.z);
     this.targetGroup.visible = false;
     this.autoAimTarget = null;
     this.movementKeys.clear();
@@ -2017,8 +2023,10 @@ export class GameEngine {
       -(THREE.MathUtils.clamp(y, 0, 1) * 2 - 1),
     );
 
-    const aimHeight = this.helicopter.body.position.y;
-    this.mousePlane.set(this.worldUp, -aimHeight);
+    // The 30mm chin turret & reticle track a ground-plane cursor: the mouse ray
+    // lands on the battlefield plane Y = 0, fully decoupled from the airframe's
+    // own heading — fly or strafe one way while gunning another.
+    this.mousePlane.set(this.worldUp, 0);
     this.raycaster.setFromCamera(this.mouseNDC, this.camera);
 
     const target = this.mouseAimScratch;
@@ -2036,7 +2044,7 @@ export class GameEngine {
     dz /= distance;
     this.mouseAimPoint.set(
       this.helicopter.body.position.x + dx * clampedDistance,
-      aimHeight,
+      0,
       this.helicopter.body.position.z + dz * clampedDistance,
     );
     this.mouseAimValid = true;
@@ -2110,16 +2118,6 @@ export class GameEngine {
   onPointerMove = (e: PointerEvent) => {
     if (e.target !== this.renderer.domElement) return;
     if (this.settings.touchMode && e.pointerType === 'touch') return;
-    if (this.isMiddleMouseOrbiting) {
-      const deltaX = e.clientX - this.lastPointerX;
-      const sensitivity = (this.settings.cameraSensitivity ?? 1.0) * 0.006;
-      this.cameraYaw -= deltaX * sensitivity;
-      this.lastPointerX = e.clientX;
-      this.lastPointerY = e.clientY;
-      this.lastCameraInputTime = performance.now() / 1000;
-      this.isRecenteringCamera = false;
-      return;
-    }
     this.updateMouseAimFromEvent(e);
   };
 
@@ -2129,16 +2127,6 @@ export class GameEngine {
     if (this.settings.touchMode && e.pointerType === 'touch') return;
     e.preventDefault();
     this.audio.resume();
-
-    if (e.button === 1) {
-      // Middle Click: start camera yaw orbit
-      this.isMiddleMouseOrbiting = true;
-      this.lastPointerX = e.clientX;
-      this.lastPointerY = e.clientY;
-      this.lastCameraInputTime = performance.now() / 1000;
-      this.isRecenteringCamera = false;
-      return;
-    }
 
     if (e.button === 2) {
       this.startPaintingLocks();
@@ -2154,10 +2142,6 @@ export class GameEngine {
   };
 
   onPointerUp = (e: PointerEvent) => {
-    if (e.button === 1) {
-      this.isMiddleMouseOrbiting = false;
-      return;
-    }
     if (e.button === 2 || this.isPaintingLocks) {
       this.releaseSalvo();
     } else {
@@ -2189,9 +2173,12 @@ export class GameEngine {
     this.leftStick = { x: 0, y: 0, active: false };
     this.rightStick = { x: 0, y: 0, active: false };
     this.keyboardVelocity.set(0, 0);
+    this.yawInput = 0;
     this.verticalInput = 0;
     this.gamepadMove.x = 0;
     this.gamepadMove.z = 0;
+    this.gamepadStrafe = 0;
+    this.gamepadVert = 0;
     this.afterburnerActive = false;
   }
 
@@ -2606,56 +2593,27 @@ export class GameEngine {
     if (!this.isPlaying) return;
     const key = e.key.toLowerCase();
 
-    // B3: E triggers the Devastation overcharge (Space/PageUp keep altitude-up).
-    if (key === "e" && !e.repeat) {
-      this.activateDevastation(performance.now() / 1000);
-      return;
-    }
-
-    // Double tap dash triggers
-    if (!e.repeat) {
-      const doubleTapThreshold = 250;
-      const now = performance.now();
-      if (key === "a" || key === "arrowleft") {
-        if (now - (this.lastTapTime["a"] || 0) < doubleTapThreshold) {
-          this.triggerDash(-1, 0);
-        }
-        this.lastTapTime["a"] = now;
-      } else if (key === "d" || key === "arrowright") {
-        if (now - (this.lastTapTime["d"] || 0) < doubleTapThreshold) {
-          this.triggerDash(1, 0);
-        }
-        this.lastTapTime["d"] = now;
-      } else if (key === "w" || key === "arrowup") {
-        if (now - (this.lastTapTime["w"] || 0) < doubleTapThreshold) {
-          this.triggerDash(0, -1);
-        }
-        this.lastTapTime["w"] = now;
-      } else if (key === "s" || key === "arrowdown") {
-        if (now - (this.lastTapTime["s"] || 0) < doubleTapThreshold) {
-          this.triggerDash(0, 1);
-        }
-        this.lastTapTime["s"] = now;
-      }
-    }
-
+    // Heading-relative flight schema:
+    //   A/D (←/→)    rudder yaw — rotates the heading
+    //   W/S (↑/↓)    cyclic thrust along the heading (forward / reverse)
+    //   Q/E          lateral cyclic strafe
+    //   Shift/Ctrl   collective climb / descend
     if (
       [
         "w",
         "a",
         "s",
         "d",
+        "q",
+        "e",
         "arrowup",
         "arrowleft",
         "arrowdown",
         "arrowright",
+        "shift",
+        "control",
         " ",
         "spacebar",
-        "shift",
-        "e",
-        "pageup",
-        "pagedown",
-        "alt",
       ].includes(key)
     ) {
       e.preventDefault();
@@ -2667,21 +2625,15 @@ export class GameEngine {
     if (key === "3") this.switchWeapon(WeaponType.ROCKET);
     if (key === "4") this.switchWeapon(WeaponType.SHOTGUN);
     if (key === "r") this.startReload();
-
     if (key === "c" && !e.repeat) this.deployCountermeasure(performance.now() / 1000);
-    if ((key === "x" || key === "v") && !e.repeat) this.recenterCamera(performance.now() / 1000);
-
-    if (key === "q") {
-      this.startPaintingLocks();
-    }
+    // Double-tap dash, Devastation (E), camera-recenter (X/V) and Q-salvo were
+    // retired with the heading-relative schema — Q/E are strafe now, and salvo
+    // painting lives on the Right-Mouse-Button.
   };
 
   onKeyUp = (e: KeyboardEvent) => {
     const key = e.key.toLowerCase();
     this.movementKeys.delete(key);
-    if (key === "q") {
-      this.releaseSalvo();
-    }
   };
 
   triggerDash(dx?: number, dz?: number) {
@@ -3298,7 +3250,7 @@ export class GameEngine {
     this.helicopter = new Helicopter(this.scene, this.world, this.playerModel);
     this.helicopter.body.addEventListener("collide", this.onHelicopterCollide);
     this.delivery.setCarrierRoot(this.helicopter.mesh);
-    this.movementTarget.set(0, 26, 0);
+    this.movementTarget.set(0, FLIGHT_SPEC.spawnAltitude, 0);
     this.updateUI(performance.now() / 1000);
   }
 
@@ -5564,24 +5516,36 @@ export class GameEngine {
 
   private getArcadeSpawnPoint(type: EnemyType, index: number, formationSize: number) {
     const player = this.helicopter.body.position;
-    
-    // Survival roguelite spawn ring: spawn outside camera view, distributed around player
-    const SPAWN_INNER_RADIUS = 120;
-    const SPAWN_OUTER_RADIUS = 200;
+
+    // Survival spawn ring: spawn just beyond the visible field, then stream in.
+    // The chase camera faces the heading, so pressure is biased AHEAD of the
+    // nose — otherwise everything engages from behind the camera and the pilot
+    // only ever sees incoming tracers.
+    const SPAWN_INNER_RADIUS = 85;
+    const SPAWN_OUTER_RADIUS = 165;
+
+    // World angle that points exactly along forwardVector = (sin h, 0, cos h).
+    const heading = this.helicopter.mesh.rotation.y;
+    const noseAngle = Math.atan2(Math.cos(heading), Math.sin(heading));
 
     let angle: number;
     if (type === EnemyType.DRONE || type === EnemyType.SHOOTER || type === EnemyType.BOSS) {
-      const sectorAngle = this.combatDirector.getSectorSpawnAngle(
-        Math.floor(Math.random() * 10000) + index * 17,
-        this.currentWave,
-        this.isOverdrive,
-      );
-      angle = sectorAngle + (Math.random() - 0.5) * 0.35;
+      if (Math.random() < 0.65) {
+        // ~65% of air pressure arrives in a wide front arc ahead of the nose.
+        angle = noseAngle + (Math.random() - 0.5) * 2.2;
+      } else {
+        const sectorAngle = this.combatDirector.getSectorSpawnAngle(
+          Math.floor(Math.random() * 10000) + index * 17,
+          this.currentWave,
+          this.isOverdrive,
+        );
+        angle = sectorAngle + (Math.random() - 0.5) * 0.35;
+      }
     } else {
       angle = Math.random() * Math.PI * 2;
-      if (Math.random() < 0.45) {
-        // 45% bias towards front 120-degree sector
-        angle = -Math.PI / 2 + (Math.random() - 0.5) * (Math.PI * 0.7);
+      if (Math.random() < 0.55) {
+        // Ground units favor the same nose-front arc so they appear ahead too.
+        angle = noseAngle + (Math.random() - 0.5) * 1.9;
       }
     }
     
@@ -6079,24 +6043,21 @@ export class GameEngine {
     }
 
     const DEADZONE = MOVEMENT_CONFIG.analogDeadzone;
-    // Left stick: horizontal (axes[0]) & vertical (axes[1])
+    // Left stick: X = rudder yaw (+right), Y = cyclic thrust (+forward when up).
     const lx = gp.axes[0] ?? 0;
-    const ly = gp.axes[1] ?? 0;
-    // Standard gamepad has ly negative for UP, positive for DOWN.
-    // In our screen coordinate space: +Y is UP, -Y is DOWN.
-    const rawY = this.settings.invertedY ? ly : -ly;
-    const rawX = lx;
-    const lMag = Math.hypot(rawX, rawY);
+    const ly = gp.axes[1] ?? 0; // Standard pad: negative is up
+    const rawUp = -ly;
+    const lMag = Math.hypot(lx, rawUp);
 
     if (lMag > DEADZONE) {
       this.hasInputThisFrame = true;
-      const normX = rawX / lMag;
-      const normY = rawY / lMag;
+      const normX = lx / lMag;
+      const normUp = rawUp / lMag;
       // Linear radial deadzone remapping (0..1) with immediate input response
       const clampedMag = Math.min(1, (lMag - DEADZONE) / (1 - DEADZONE));
 
-      this.gamepadMove.x = normX * clampedMag;
-      this.gamepadMove.z = normY * clampedMag; // Stores screen Y in gamepadMove.z
+      this.gamepadMove.x = normX * clampedMag;   // rudder
+      this.gamepadMove.z = normUp * clampedMag;  // thrust
 
       this.audio.resume();
     } else {
@@ -6104,61 +6065,51 @@ export class GameEngine {
       this.gamepadMove.z = 0;
     }
 
-    // LT / L2 Modifier check (gp.buttons[6])
-    const isCameraModifierHeld = Boolean(
-      gp.buttons[6]?.pressed || (gp.buttons[6] && gp.buttons[6].value > 0.2),
-    );
+    // D-pad: left/right = lateral strafe, up/down = collective (Shift/Ctrl).
+    this.gamepadStrafe =
+      (gp.buttons[14]?.pressed ? -1 : 0) + (gp.buttons[15]?.pressed ? 1 : 0);
+    this.gamepadVert =
+      (gp.buttons[12]?.pressed ? 1 : 0) + (gp.buttons[13]?.pressed ? -1 : 0);
+    if (this.gamepadStrafe !== 0 || this.gamepadVert !== 0) {
+      this.hasInputThisFrame = true;
+    }
 
-    // Right stick: camera orbit (when LT held) OR weapon aiming & auto-fire (when LT not held)
+    // Right stick: decoupled chin-gun aiming — the gimbal tracks the stick
+    // while the airframe keeps its own heading (auto-fire while deflected).
     const rx = gp.axes[2] ?? 0;
     const ry = gp.axes[3] ?? 0;
     const rMag = Math.hypot(rx, ry);
 
-    if (isCameraModifierHeld) {
-      // Camera Orbit Mode: Right stick X rotates camera yaw smoothly and responsively
-      const camSensitivity = (this.settings.cameraSensitivity ?? 1.0) * (this.settings.gamepadSensitivity ?? 1.5);
-      if (Math.abs(rx) > DEADZONE) {
-        const normRx = (rx - Math.sign(rx) * DEADZONE) / (1 - DEADZONE);
-        this.targetCameraYawVelocity = -normRx * 3.5 * camSensitivity; // ~200 deg/sec base
-        this.lastCameraInputTime = time;
-      } else {
-        this.targetCameraYawVelocity = 0;
-      }
-    } else {
-      // Normal Mode: Target camera velocity is 0 from controller
-      this.targetCameraYawVelocity = 0;
+    if (rMag > DEADZONE) {
+      this.audio.resume();
+      this.isMouseActive = false;
+      this.mouseAimValid = false;
 
-      if (rMag > DEADZONE) {
-        this.audio.resume();
-        this.isMouseActive = false;
-        this.mouseAimValid = false;
+      const aimDist = 65;
+      const aimHeight = this.helicopter.body.position.y;
 
-        const aimDist = 65;
-        const aimHeight = this.helicopter.body.position.y;
+      const camFwd = GameEngine._scratchCamFwd;
+      this.camera.getWorldDirection(camFwd);
+      camFwd.y = 0;
+      if (camFwd.lengthSq() < 0.0001) camFwd.set(0, 0, -1);
+      else camFwd.normalize();
 
-        const camFwd = GameEngine._scratchCamFwd;
-        this.camera.getWorldDirection(camFwd);
-        camFwd.y = 0;
-        if (camFwd.lengthSq() < 0.0001) camFwd.set(0, 0, -1);
-        else camFwd.normalize();
+      const camRight = GameEngine._scratchCamRight;
+      camRight.crossVectors(camFwd, this.worldUp).normalize();
 
-        const camRight = GameEngine._scratchCamRight;
-        camRight.crossVectors(camFwd, this.worldUp).normalize();
+      const rNormX = rx / rMag;
+      const rScreenY = this.settings.invertedY ? ry / rMag : -ry / rMag;
 
-        const rNormX = rx / rMag;
-        const rScreenY = this.settings.invertedY ? ry / rMag : -ry / rMag;
+      const aimWorldX = camRight.x * rNormX + camFwd.x * rScreenY;
+      const aimWorldZ = camRight.z * rNormX + camFwd.z * rScreenY;
 
-        const aimWorldX = camRight.x * rNormX + camFwd.x * rScreenY;
-        const aimWorldZ = camRight.z * rNormX + camFwd.z * rScreenY;
-
-        this.aimPoint.set(
-          this.helicopter.body.position.x + aimWorldX * aimDist,
-          aimHeight,
-          this.helicopter.body.position.z + aimWorldZ * aimDist,
-        );
-        this.helicopter.setGunAim(this.aimPoint.x, aimHeight, this.aimPoint.z, true);
-        this.targetGroup.visible = false;
-      }
+      this.aimPoint.set(
+        this.helicopter.body.position.x + aimWorldX * aimDist,
+        aimHeight,
+        this.helicopter.body.position.z + aimWorldZ * aimDist,
+      );
+      this.helicopter.setGunAim(this.aimPoint.x, aimHeight, this.aimPoint.z, true);
+      this.targetGroup.visible = false;
     }
 
     // Gamepad buttons
@@ -6167,14 +6118,9 @@ export class GameEngine {
       gp.buttons[7]?.pressed ||
       (gp.buttons[7] && gp.buttons[7].value > 0.1) ||
       gp.buttons[5]?.pressed ||
-      (!isCameraModifierHeld && rMag > DEADZONE);
+      rMag > DEADZONE;
     if (this.isFiringGamepad) {
       this.audio.resume();
-    }
-
-    // B button (1) = Dash
-    if (gp.buttons[1]?.pressed && this.dashState === "READY") {
-      this.triggerDash();
     }
 
     // X button (2) = Reload
@@ -6186,128 +6132,91 @@ export class GameEngine {
     if (gp.buttons[4]?.pressed) {
       this.deployCountermeasure(performance.now() / 1000);
     }
-
-    // R3 (button 11) = Recenter Camera
-    const r3Pressed = Boolean(gp.buttons[11]?.pressed);
-    if (r3Pressed && !this.prevR3Pressed) {
-      this.recenterCamera(time);
-    }
-    this.prevR3Pressed = r3Pressed;
+    // B-button dash and R3 camera-recenter were retired with the heading-
+    // relative schema (dash fights the momentum model; the camera is now a
+    // speed-reactive tail-chase cam locked to the heading).
   }
 
   updateKeyboardMovement(delta: number) {
-    // 1. Digital keyboard screen input (-1..1)
-    let kbX = 0;
-    let kbY = 0;
+    // Heading-relative flight schema. Digital keys are the primary source;
+    // touch joystick > gamepad analog override them when active.
 
-    if (this.movementKeys.has("a") || this.movementKeys.has("arrowleft"))
-      kbX -= 1;
-    if (this.movementKeys.has("d") || this.movementKeys.has("arrowright"))
-      kbX += 1;
-    if (this.movementKeys.has("w") || this.movementKeys.has("arrowup"))
-      kbY += 1; // Up on screen
-    if (this.movementKeys.has("s") || this.movementKeys.has("arrowdown"))
-      kbY -= 1; // Down on screen
+    // 1. Keyboard digital flight inputs.
+    let kbRudder = 0; // +1 turn right (D / →)
+    let kbThrust = 0; // +1 accelerate forward along heading (W / ↑)
+    let kbStrafe = 0; // +1 strafe right (E)
+    if (this.movementKeys.has("a") || this.movementKeys.has("arrowleft")) kbRudder -= 1;
+    if (this.movementKeys.has("d") || this.movementKeys.has("arrowright")) kbRudder += 1;
+    if (this.movementKeys.has("w") || this.movementKeys.has("arrowup")) kbThrust += 1;
+    if (this.movementKeys.has("s") || this.movementKeys.has("arrowdown")) kbThrust -= 1;
+    if (this.movementKeys.has("q")) kbStrafe -= 1;
+    if (this.movementKeys.has("e")) kbStrafe += 1;
 
-    const kbMag = Math.hypot(kbX, kbY);
-    if (kbMag > 1) {
-      kbX /= kbMag;
-      kbY /= kbMag;
-    }
-
-    // 2. Touch left stick (virtual joystick)
-    let touchX = 0;
-    let touchY = 0;
+    // 2. Touch left stick (heading-relative analog): push up = thrust forward,
+    //    push left/right = rudder yaw.
+    let touchRudder = 0;
+    let touchThrust = 0;
     if (this.leftStick.active) {
       const lx = THREE.MathUtils.clamp(this.leftStick.x, -1, 1);
       const ly = THREE.MathUtils.clamp(this.leftStick.y, -1, 1);
-      // Virtual joystick: ly > 0 is down, ly < 0 is up
-      const rawY = -ly; // Screen Up is positive
-      const rawX = lx;
-      const lMag = Math.hypot(rawX, rawY);
+      const rawUp = -ly; // Screen up is positive
+      const lMag = Math.hypot(rawUp, lx);
       const TOUCH_DEADZONE = 0.12;
       if (lMag > TOUCH_DEADZONE) {
         const clamped = Math.min(1, (lMag - TOUCH_DEADZONE) / (1 - TOUCH_DEADZONE));
-        touchX = (rawX / lMag) * clamped;
-        touchY = (rawY / lMag) * clamped;
+        touchRudder = (lx / lMag) * clamped;
+        touchThrust = (rawUp / lMag) * clamped;
       }
     }
 
-    // 3. Select active horizontal screen input
-    let screenX = kbX;
-    let screenY = kbY;
+    // 3. Select the active horizontal source (touch > gamepad > keyboard).
+    const padActive =
+      this.gamepadIndex !== null &&
+      (Math.abs(this.gamepadMove.x) > 0.005 ||
+        Math.abs(this.gamepadMove.z) > 0.005 ||
+        this.gamepadStrafe !== 0 ||
+        this.gamepadVert !== 0);
 
+    let yaw = kbRudder;
+    let thrust = kbThrust;
+    let strafe = kbStrafe;
     if (this.leftStick.active) {
-      screenX = touchX;
-      screenY = touchY;
-    } else if (this.gamepadMove.x !== 0 || this.gamepadMove.z !== 0) {
-      screenX = this.gamepadMove.x;
-      screenY = this.gamepadMove.z; // gamepadMove.z holds screen Y
+      yaw = touchRudder;
+      thrust = touchThrust;
+      strafe = 0;
+    } else if (padActive) {
+      yaw = this.gamepadMove.x;
+      thrust = this.gamepadMove.z;
+      strafe = this.gamepadStrafe;
     }
 
-    const screenMag = Math.hypot(screenX, screenY);
-    const clampedMag = Math.min(1, screenMag);
-    if (clampedMag > 0.005) {
-      this.hasInputThisFrame = true;
-    }
+    this.yawInput = THREE.MathUtils.clamp(yaw, -1, 1);
+    this.keyboardVelocity.x = THREE.MathUtils.clamp(strafe, -1, 1);
+    this.keyboardVelocity.y = THREE.MathUtils.clamp(thrust, -1, 1);
 
-    // 4. Project Screen (X, Y) onto Camera-Relative Horizontal Plane (world X, Z)
-    const camFwd = GameEngine._scratchCamFwd;
-    this.camera.getWorldDirection(camFwd);
-    camFwd.y = 0;
-    if (camFwd.lengthSq() < 0.0001) {
-      camFwd.set(0, 0, -1);
-    } else {
-      camFwd.normalize();
-    }
-
-    const camRight = GameEngine._scratchCamRight;
-    camRight.crossVectors(camFwd, this.worldUp).normalize();
-
-    let normScreenX = 0;
-    let normScreenY = 0;
-    if (screenMag > 0.0001) {
-      normScreenX = screenX / screenMag;
-      normScreenY = screenY / screenMag;
-    }
-
-    const worldMoveX = (camRight.x * normScreenX + camFwd.x * normScreenY) * clampedMag;
-    const worldMoveZ = (camRight.z * normScreenX + camFwd.z * normScreenY) * clampedMag;
-
-    this.keyboardVelocity.set(worldMoveX, worldMoveZ);
-
-    // 5. Vertical input (Space / Alt / Gamepad D-pad)
+    // 4. Collective vertical: Shift climbs, Ctrl descends (+ pad D-pad).
     let moveY = 0;
     if (
+      this.movementKeys.has("shift") ||
       this.movementKeys.has(" ") ||
-      this.movementKeys.has("spacebar") ||
-      this.movementKeys.has("pageup")
+      this.movementKeys.has("spacebar")
     )
       moveY += 1;
-    if (
-      this.movementKeys.has("pagedown") ||
-      this.movementKeys.has("alt")
-    )
-      moveY -= 1;
-
-    if (this.gamepadIndex !== null) {
-      const gp = navigator.getGamepads()[this.gamepadIndex];
-      if (gp) {
-        if (gp.buttons[12]?.pressed) moveY += 1;
-        if (gp.buttons[13]?.pressed) moveY -= 1;
-      }
-    }
-
+    if (this.movementKeys.has("control")) moveY -= 1;
+    if (this.gamepadIndex !== null) moveY += this.gamepadVert;
     this.verticalInput = THREE.MathUtils.clamp(moveY, -1, 1);
 
-    // Afterburner: hold Shift to burn fuel for speed + damage
-    this.afterburnerActive =
-      this.movementKeys.has("shift") &&
-      this.currentFuel > 1 &&
-      this.isPlaying &&
-      this.health > 0;
+    // Afterburner was retired by the new schema — Shift is collective now.
+    this.afterburnerActive = false;
 
-    if (moveY !== 0) this.hasInputThisFrame = true;
+    if (
+      Math.abs(this.yawInput) > 0.001 ||
+      Math.abs(this.keyboardVelocity.x) > 0.001 ||
+      Math.abs(this.keyboardVelocity.y) > 0.001 ||
+      Math.abs(this.verticalInput) > 0.001
+    ) {
+      this.hasInputThisFrame = true;
+    }
   }
 
 
@@ -6771,12 +6680,12 @@ export class GameEngine {
       time, delta, this.windCannon, this.particles,
       this.shieldTimer > 0 || this.openingProtected, this.speedBoostTimer > 0, this.hasInputThisFrame,
       {
+        // Heading-relative command: x = strafe, z = thrust along heading,
+        // y = collective, yaw = rudder (see MovementCommand / FLIGHT_SPEC).
         x: this.keyboardVelocity.x,
         z: this.keyboardVelocity.y,
-        y: this.verticalInput * (1 + this.hangarUpgrades.rotor * 0.025),
-        afterburner: this.afterburnerActive
-          ? MOVEMENT_CONFIG.afterburnerMultiplier + this.hangarUpgrades.engine * 0.025
-          : 1,
+        y: this.verticalInput,
+        yaw: this.yawInput,
         cargoMultiplier: this.delivery.isCarrying()
           ? cargoMovementMultiplier(this.hangarUpgrades.airframe)
           : 1,
@@ -6872,6 +6781,18 @@ export class GameEngine {
     } else if (bx < -bound) {
       this.helicopter.body.position.x = -bound;
       if (this.helicopter.body.velocity.x < 0) this.helicopter.body.velocity.x = 0;
+    }
+    // Strict altitude envelope after the physics step (ground cushion 2.4 m /
+    // ceiling 26 m above the underlying surface — see FLIGHT_SPEC).
+    const heliY = this.helicopter.body.position.y;
+    const yMin = hoverFloor + FLIGHT_SPEC.groundCushion;
+    const yMax = hoverFloor + FLIGHT_SPEC.ceiling;
+    if (heliY < yMin) {
+      this.helicopter.body.position.y = yMin;
+      if (this.helicopter.body.velocity.y < 0) this.helicopter.body.velocity.y = 0;
+    } else if (heliY > yMax) {
+      this.helicopter.body.position.y = yMax;
+      if (this.helicopter.body.velocity.y > 0) this.helicopter.body.velocity.y = 0;
     }
     this.helicopter.syncBodyTransform();
 
@@ -7745,7 +7666,130 @@ export class GameEngine {
     }
   }
 
+  /** Slow cinematic yaw used by the menu/pause idle camera (rad). */
+  private menuCameraYaw: number = 0;
+
+  /**
+   * Dynamic third-person trailing chase camera (heading-locked).
+   *  • speedRatio = clamp(horizontalSpeed / maxSpeed, 0, 1.2)
+   *  • pull-back 26 m + ratio*4.5, height 20 m + (alt-2.4)*0.34 + ratio*1.6
+   *  • position eased dt*10 horizontal / dt*8 vertical (snappy)
+   *  • forward lookahead 18 m + ratio*6 at y = max(3, playerY*0.55), eased dt*12
+   *  • subtle camera roll = 15% of the aircraft's bank roll
+   */
   updateCamera(delta: number) {
+    const heli = this.helicopter.body.position;
+    const velocity = this.helicopter.body.velocity;
+    if (
+      !Number.isFinite(heli.x) || !Number.isFinite(heli.y) || !Number.isFinite(heli.z) ||
+      !Number.isFinite(velocity.x) || !Number.isFinite(velocity.z)
+    ) return;
+
+    if (!this.isPlaying) {
+      // Menu / pause backdrop: slow drift around the parked airframe.
+      this.menuCameraYaw += 0.02 * delta;
+      const s = Math.sin(this.menuCameraYaw);
+      const c = Math.cos(this.menuCameraYaw);
+      this.baseCamPos.set(heli.x + s * 34, heli.y + 24, heli.z + c * 34);
+      this.camera.position.copy(this.baseCamPos);
+      this.cameraLookAtTarget.set(heli.x, heli.y + 2, heli.z);
+      this.camera.lookAt(this.cameraLookAtTarget);
+      return;
+    }
+
+    // --- Speed-dependent pull-back & height -------------------------------
+    const heading = this.helicopter.mesh.rotation.y;
+    const horizSpeed =
+      this.helicopter.lastHorizSpeed > 0.001
+        ? this.helicopter.lastHorizSpeed
+        : Math.hypot(velocity.x, velocity.z);
+    const speedRatio = THREE.MathUtils.clamp(
+      horizSpeed / FLIGHT_SPEC.maxForwardSpeed,
+      0,
+      1.2,
+    );
+    const sinH = Math.sin(heading);
+    const cosH = Math.cos(heading);
+    const floor = this.helicopter.smoothedHoverFloor;
+    const altAboveCushion = Math.max(0, heli.y - (floor + FLIGHT_SPEC.groundCushion));
+
+    // Pull back 26-30 m and ride lower so aircraft stay large in frame while
+    // still seeing the ground battlefield.
+    const camDist = 26 + speedRatio * 4.5;
+    const camHeight = 20 + altAboveCushion * 0.34 + speedRatio * 1.6;
+    const camTargetX = heli.x - sinH * camDist;
+    const camTargetZ = heli.z - cosH * camDist;
+    const camTargetY = heli.y + camHeight;
+
+    // Dual-stage interpolation — snappy dt*10 horizontal, dt*8 vertical so
+    // the camera stops smearing behind quick maneuvers.
+    const hK = 1 - Math.exp(-10.0 * delta);
+    const vK = 1 - Math.exp(-8.0 * delta);
+    this.baseCamPos.x += (camTargetX - this.baseCamPos.x) * hK;
+    this.baseCamPos.z += (camTargetZ - this.baseCamPos.z) * hK;
+    this.baseCamPos.y += (camTargetY - this.baseCamPos.y) * vK;
+    this.cameraFollowError = Math.hypot(
+      camTargetX - this.baseCamPos.x,
+      camTargetY - this.baseCamPos.y,
+      camTargetZ - this.baseCamPos.z,
+    );
+
+    // --- Dynamic forward lookahead (ahead of the nose, into the field) ----
+    // Aim higher (y = max(2.5, playerY * 0.5)) so airborne enemies at cruise
+    // altitude sit near frame-center instead of hugging the top edge.
+    const lookaheadDist = 18 + speedRatio * 6.0;
+    const lookK = 1 - Math.exp(-12.0 * delta);
+    // Aim high enough that airborne hostiles at cruise altitude stay in frame.
+    const lookTargetY = Math.max(3, heli.y * 0.55);
+    this.cameraLookAtTarget.x += (heli.x + sinH * lookaheadDist - this.cameraLookAtTarget.x) * lookK;
+    this.cameraLookAtTarget.y += (lookTargetY - this.cameraLookAtTarget.y) * lookK;
+    this.cameraLookAtTarget.z += (heli.z + cosH * lookaheadDist - this.cameraLookAtTarget.z) * lookK;
+
+    // Mild speed FOV for readability (feel only; geometry is per spec).
+    const targetFov = 52 + Math.min(horizSpeed * 0.12, 5);
+    this.camera.fov += (targetFov - this.camera.fov) * (1 - Math.exp(-6 * delta));
+    this.camera.updateProjectionMatrix();
+
+    this.camera.position.copy(this.baseCamPos);
+
+    // Settings-gated screen shake.
+    if (this.cameraShakeAmp > 0.02) {
+      const shakeScale = this.settings.screenShake === 'low' ? 0.45 : 1;
+      const amp = this.cameraShakeAmp * shakeScale;
+      this.camera.position.x += (Math.random() - 0.5) * amp;
+      this.camera.position.y += (Math.random() - 0.5) * amp * 0.6;
+      this.camera.position.z += (Math.random() - 0.5) * amp;
+    }
+    this.cameraShakeAmp = Math.max(0, this.cameraShakeAmp - delta * (2.5 + this.cameraShakeAmp));
+
+    // Building occlusion / ghosting between the trailing camera and the hull.
+    this.city.updateOcclusion(
+      this.baseCamPos.x,
+      this.baseCamPos.y,
+      this.baseCamPos.z,
+      heli.x,
+      heli.y,
+      heli.z,
+      delta,
+      this.isPlaying,
+    );
+
+    if (
+      Number.isFinite(this.camera.position.x) &&
+      Number.isFinite(this.camera.position.y) &&
+      Number.isFinite(this.camera.position.z) &&
+      Number.isFinite(this.cameraLookAtTarget.x) &&
+      Number.isFinite(this.cameraLookAtTarget.y) &&
+      Number.isFinite(this.cameraLookAtTarget.z)
+    ) {
+      this.camera.lookAt(this.cameraLookAtTarget);
+      // 15% of the airframe's bank rolled into the view for high-G immersion.
+      this.camera.rotateZ(this.helicopter.mesh.rotation.z * 0.15);
+    }
+  }
+
+  /** Superseded orbit camera (free/soft/fixed yaw modes). Kept compiled only. */
+  private legacyOrbitCamera(delta: number) {
     const heli = this.helicopter.body.position;
     const velocity = this.helicopter.body.velocity;
     if (

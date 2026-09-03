@@ -69,13 +69,14 @@
 
 | Action | Keybinding |
 |---|---|
-| **Move Helicopter** | `W`, `A`, `S`, `D` or `Arrow Keys` |
-| **Climb / Descend** | `Space` / `Alt` |
-| **Aim Crosshair** | `Mouse Movement` |
+| **Rudder Yaw (rotate heading)** | `A`, `D` or `←` / `→` |
+| **Thrust forward / reverse (along heading)** | `W`, `S` or `↑` / `↓` |
+| **Lateral Cyclic Strafe** | `Q` / `E` |
+| **Collective Climb / Descend** | `Shift` / `Space` / `Ctrl` |
+| **Aim Chin Turret (ground cursor)** | `Mouse Movement` — independent of your heading |
 | **Fire Primary Weapon** | `Left Click` |
-| **Multi-Salvo Target Painter** | `Q` or `Right Click` (Hold to paint) |
+| **Multi-Salvo Target Painter** | `Right Click` (Hold to paint) |
 | **Deploy Flares (Countermeasures)** | `C` |
-| **Afterburner (Boost)** | `Shift` (Burns extra fuel) |
 | **Switch Weapons** | `1`, `2`, `3`, `4` |
 | **Manual Reload** | `R` |
 | **Pause / Menu** | `Esc` or `P` |
