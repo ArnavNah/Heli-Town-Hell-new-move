@@ -161,31 +161,29 @@ export const MOVEMENT_CONFIG = {
 /**
  * FLIGHT_SPEC — heading-relative attack-helicopter flight controller.
  * Arcade-tuned: brisk cruise, snappy thrust and yaw, momentum glide on drag.
- *  • Rudder A/D (←/→) yaws the heading at up to ~2.6 rad/s with smooth
+ *  • Rudder A/D (←/→) yaws the heading at up to ~1.85 rad/s with smooth
  *    angular acceleration and deceleration damping.
  *  • W/S thrusts along `forwardVector = (sin h, 0, cos h)`; Q/E strafes along
- *    the aircraft's TRUE right vector = (−cos h, 0, sin h) — three.js is
- *    right-handed, so the classic (cos h, 0, −sin h) is actually the LEFT
- *    side of a nose facing +Z. Cruise caps at 34 u/s.
+ *    `strafeVector = (cos h, 0, −sin h)`. Cruise caps at 22 u/s.
  *  • Shift climbs at 9.5 u/s, Ctrl sinks at 8.0 u/s; altitude is clamped to
  *    a 2.4 m ground cushion / 26 m ceiling above the underlying surface.
  *  • Linear momentum glides on exponential drag `v *= exp(-drag*dt)`.
  *  • Mesh pose (Euler order YXZ = Ry→Rx→Rz): pitch = ±0.32 rad (~18°),
- *    roll = ±0.48 rad (~28°), both eased with `1 - exp(-12*dt)`.
+ *    roll = ±0.48 rad (~28°), both eased with `1 - exp(-10*dt)`.
  */
 export const FLIGHT_SPEC = {
   /** Max cruise speed (u/s). */
-  maxForwardSpeed: 34,
+  maxForwardSpeed: 22,
   /** Cyclic thrust / lateral-strafe acceleration (u/s²) toward the cap — the
    *  cap (not drag) is what governs cruise, so response is immediate. */
-  forwardAccel: 120,
+  forwardAccel: 96,
   /** Exponential drag coefficient (/s): velocity *= exp(-drag * dt). */
-  drag: 1.35,
-  /** Rudder turn rate cap (rad/s, ~149°/s). */
-  turnRate: 2.6,
+  drag: 0.85,
+  /** Rudder turn rate cap (rad/s, ~106°/s). */
+  turnRate: 1.85,
   /** Angular smoothing (/s) while yaw is held vs. after release. */
-  yawAccelResponse: 14.0,
-  yawDecelResponse: 10.0,
+  yawAccelResponse: 8.0,
+  yawDecelResponse: 6.5,
   /** Collective climb (+) / sink (−) rates (u/s). */
   climbRate: 9.5,
   sinkRate: 8.0,
@@ -202,7 +200,7 @@ export const FLIGHT_SPEC = {
   maxPitch: 0.32,
   maxRoll: 0.48,
   /** Pitch/roll ease response (/s) — lerp(current, target, 1 - exp(-10dt)). */
-  tiltResponse: 12.0,
+  tiltResponse: 10.0,
 } as const;
 
 /**
@@ -317,6 +315,8 @@ export class Helicopter extends Entity {
 
   // Body yaw angular velocity (rad/s)
   bodyYawVelocity: number = 0;
+  /** Logical avionics heading, kept separate from visual pitch and roll. */
+  playerHeading: number = Math.PI;
 
   // Dash variables
   dashTimer: number = 0;
@@ -496,7 +496,8 @@ export class Helicopter extends Entity {
     this.body.updateMassProperties();
     world.addBody(this.body);
 
-    this.mesh.rotation.y = Math.PI;
+    this.playerHeading = Math.PI;
+    this.mesh.rotation.y = this.playerHeading;
 
     this.mesh.traverse((child) => {
       if (
@@ -1044,6 +1045,7 @@ export class Helicopter extends Entity {
     this.idleBlend = 0;
     this.idleBobY = 0;
     this.bodyYawVelocity = 0;
+    this.playerHeading = 0;
     this.gunAimMode = false;
     this.terrainSafetyActive = false;
     this.trailEffectTimer = 0;
@@ -1064,7 +1066,7 @@ export class Helicopter extends Entity {
     this.body.force.set(0, 0, 0);
     this.body.torque.set(0, 0, 0);
     this.mesh.position.set(0, FLIGHT_SPEC.spawnAltitude, 0);
-    this.mesh.rotation.set(0, 0, 0);
+    this.mesh.rotation.set(0, this.playerHeading, 0);
     this.mesh.visible = true; // the death explosion hides the wreck — restore on restart
   }
 
@@ -1098,10 +1100,10 @@ export class Helicopter extends Entity {
     const cargo = move?.cargoMultiplier ?? 1;
 
     // Heading frame. forwardVector = (sin h, 0, cos h) matches the mesh's own
-    // rotation.y, so increasing the heading swings the nose LEFT (three.js is
-    // right-handed; the +Z nose's right side is −X). The aircraft's true
-    // right/strafe vector is therefore (−cos h, 0, sin h).
-    let heading = this.mesh.rotation.y;
+    // rotation.y. `rudder` / `strafe` are pilot-view inputs, so their positive
+    // direction follows screen-right from the trailing camera. With the +Z
+    // airframe nose that is the negative of the mathematical perpendicular.
+    let heading = this.playerHeading;
     const cy = Math.cos(heading);
     const sy = Math.sin(heading);
     const fwdX = sy;
@@ -1110,8 +1112,8 @@ export class Helicopter extends Entity {
     const rightZ = sy;
 
     // ---- Rudder yaw with smooth angular acceleration / deceleration ------
-    // Rudder input is +1 = turn RIGHT (D), and heading velocity is positive
-    // when turning LEFT — so the demand is negated.
+    // From the trailing pilot view, D/→ must rotate the +Z nose toward
+    // screen-right, which is decreasing Three.js Y rotation.
     const yawDemand = -rudder * S.turnRate * rotorEff;
     const yawResp = Math.abs(rudder) > 0.001 ? S.yawAccelResponse : S.yawDecelResponse;
     this.bodyYawVelocity += (yawDemand - this.bodyYawVelocity) * (1 - Math.exp(-yawResp * delta));
@@ -1121,6 +1123,7 @@ export class Helicopter extends Entity {
     heading += this.bodyYawVelocity * delta;
     while (heading > Math.PI) heading -= Math.PI * 2;
     while (heading < -Math.PI) heading += Math.PI * 2;
+    this.playerHeading = heading;
 
     // ---- Cyclic propulsion + lateral strafe with linear momentum drag -----
     // demand = normalized (thrust·fwd + strafe·right) clamped to unit circle.
@@ -1192,16 +1195,17 @@ export class Helicopter extends Entity {
     this.desiredVelocity.y = body.velocity.y;
 
     // ---- Aerodynamic tilting (visual only; logical state stays above) -----
-    // pitch: accelerating forward (+thrust) drops the nose; braking/reverse
-    // raises it. roll: banks into the turn and into strafes (euler −z = right
-    // bank). Heavy-weapon recoil kick (firePitchImpulse) adds a nose bob.
+    // The procedural airframes point down local +Z, where positive Three.js
+    // X rotation drops the nose. Forward thrust therefore uses positive pitch;
+    // braking/reverse raises it. Roll banks into turns and strafes with the
+    // requested negative-Z convention. Heavy-weapon recoil adds a nose bob.
     const pitchTarget = THREE.MathUtils.clamp(
       thrust * S.maxPitch + this.firePitchImpulse,
       -S.maxPitch,
       S.maxPitch,
     );
-    // Bank into the lateral demand: positive euler roll (z) tips the aircraft
-    // up toward its OWN right side, so a right turn / right strafe banks right.
+    // Combine rudder and lateral cyclic into one bounded banking demand. For
+    // these +Z-nose meshes, positive Z roll banks toward pilot-view right.
     const lateralDemand = THREE.MathUtils.clamp(rudder + strafe, -1, 1);
     const rollTarget = THREE.MathUtils.clamp(
       lateralDemand * S.maxRoll,

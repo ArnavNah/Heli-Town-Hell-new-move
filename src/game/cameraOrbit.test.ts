@@ -13,7 +13,7 @@ interface ChaseState {
   lookZ: number;
 }
 
-const MAX_SPEED = 34;
+const MAX_SPEED = 22;
 
 function speedRatio(horizontalSpeed: number): number {
   return THREE.MathUtils.clamp(horizontalSpeed / MAX_SPEED, 0, 1.2);
@@ -25,10 +25,10 @@ function desiredCamera(
   horizontalSpeed: number,
 ): { x: number; y: number; z: number } {
   const sr = speedRatio(horizontalSpeed);
-  const camDist = 26 + sr * 4.5;
+  const camDist = 31 + sr * 5.5;
   // altitudeAboveCushion = (playerY - 2.4), clamped at 0.
   const altAboveCushion = Math.max(0, player.y - 2.4);
-  const camHeight = 20 + altAboveCushion * 0.34 + sr * 1.6;
+  const camHeight = 22 + altAboveCushion * 0.42 + sr * 2.0;
   return {
     x: player.x - Math.sin(heading) * camDist,
     y: player.y + camHeight,
@@ -42,10 +42,10 @@ function desiredLook(
   horizontalSpeed: number,
 ): { x: number; y: number; z: number } {
   const sr = speedRatio(horizontalSpeed);
-  const lookaheadDist = 18 + sr * 6.0;
+  const lookaheadDist = 16 + sr * 8.0;
   return {
     x: player.x + Math.sin(heading) * lookaheadDist,
-    y: Math.max(3, player.y * 0.55),
+    y: player.y * 0.35,
     z: player.z + Math.cos(heading) * lookaheadDist,
   };
 }
@@ -56,10 +56,9 @@ function easeStep(
   targetCam: { x: number; y: number; z: number },
   targetLook: { x: number; y: number; z: number },
 ): ChaseState {
-  // dt*10 horizontal, dt*8 vertical; look target dt*12.
-  const hK = 1 - Math.exp(-10 * dt);
-  const vK = 1 - Math.exp(-8 * dt);
-  const lK = 1 - Math.exp(-12 * dt);
+  const hK = 1 - Math.exp(-7.5 * dt);
+  const vK = 1 - Math.exp(-6.5 * dt);
+  const lK = 1 - Math.exp(-9 * dt);
   return {
     camX: state.camX + (targetCam.x - state.camX) * hK,
     camY: state.camY + (targetCam.y - state.camY) * vK,
@@ -84,19 +83,19 @@ describe('trailing chase camera (flight spec)', () => {
 
     // Behind the tail for heading 0: negative z.
     expect(hover.x).toBeCloseTo(0, 5);
-    expect(hover.z).toBeCloseTo(-26, 5);
-    expect(cruise.z).toBeCloseTo(-(26 + 4.5), 5);
+    expect(hover.z).toBeCloseTo(-31, 5);
+    expect(cruise.z).toBeCloseTo(-(31 + 5.5), 5);
 
-    const baseHeight = 20 + (15 - 2.4) * 0.34; // 24.284 above the aircraft
+    const baseHeight = 22 + (15 - 2.4) * 0.42;
     expect(hover.y).toBeCloseTo(player.y + baseHeight, 5);
-    expect(cruise.y).toBeCloseTo(player.y + baseHeight + 1.6, 5);
+    expect(cruise.y).toBeCloseTo(player.y + baseHeight + 2.0, 5);
   });
 
   it('sits behind the tail using the aircraft heading', () => {
     const player = { x: 10, y: 12, z: -20 };
     const h = Math.PI / 2; // nose along +X → camera trails along −X
     const cam = desiredCamera(player, h, 0);
-    expect(cam.x).toBeCloseTo(player.x - 26, 5);
+    expect(cam.x).toBeCloseTo(player.x - 31, 5);
     expect(cam.z).toBeCloseTo(player.z, 5);
   });
 
@@ -105,11 +104,11 @@ describe('trailing chase camera (flight spec)', () => {
     const h = 0;
     const hoverLook = desiredLook(player, h, 0);
     expect(hoverLook.x).toBeCloseTo(0, 5);
-    expect(hoverLook.z).toBeCloseTo(18, 5);
-    expect(hoverLook.y).toBeCloseTo(Math.max(3, player.y * 0.55), 5);
+    expect(hoverLook.z).toBeCloseTo(16, 5);
+    expect(hoverLook.y).toBeCloseTo(player.y * 0.35, 5);
 
     const cruiseLook = desiredLook(player, h, MAX_SPEED);
-    expect(cruiseLook.z).toBeCloseTo(18 + 6, 5);
+    expect(cruiseLook.z).toBeCloseTo(16 + 8, 5);
   });
 
   it('converges with silky dual-stage interpolation (7.5 / 6.5 / 9.0)', () => {
@@ -136,7 +135,7 @@ describe('trailing chase camera (flight spec)', () => {
     const player = { x: 0, y: 8, z: 0 };
     const targetCam = desiredCamera(player, Math.PI / 2, MAX_SPEED);
     let state: ChaseState = {
-      camX: 0, camY: 24, camZ: -26, lookX: 0, lookY: 3, lookZ: 18,
+      camX: 0, camY: 24, camZ: -31, lookX: 0, lookY: 3, lookZ: 16,
     };
     state = easeStep(state, 1 / 60, targetCam, desiredLook(player, Math.PI / 2, MAX_SPEED));
     // A single frame moves partway, not all the way.

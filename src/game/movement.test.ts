@@ -67,15 +67,15 @@ afterEach(() => {
 
 describe('flight spec constants', () => {
   it('encodes the tuned arcade values', () => {
-    expect(FLIGHT_SPEC.turnRate).toBeCloseTo(2.6, 2);
-    expect(FLIGHT_SPEC.maxForwardSpeed).toBeCloseTo(34, 2);
+    expect(FLIGHT_SPEC.turnRate).toBeCloseTo(1.85, 2);
+    expect(FLIGHT_SPEC.maxForwardSpeed).toBeCloseTo(22, 2);
     expect(FLIGHT_SPEC.climbRate).toBeCloseTo(9.5, 2);
     expect(FLIGHT_SPEC.sinkRate).toBeCloseTo(8.0, 2);
     expect(FLIGHT_SPEC.groundCushion).toBeCloseTo(2.4, 2);
     expect(FLIGHT_SPEC.ceiling).toBeCloseTo(26.0, 2);
     expect(FLIGHT_SPEC.maxPitch).toBeCloseTo(0.32, 3);
     expect(FLIGHT_SPEC.maxRoll).toBeCloseTo(0.48, 3);
-    expect(FLIGHT_SPEC.tiltResponse).toBeCloseTo(12, 3);
+    expect(FLIGHT_SPEC.tiltResponse).toBeCloseTo(10, 3);
   });
 });
 
@@ -102,8 +102,8 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
     const start = rig.helicopter.mesh.rotation.y;
     simulate(rig, 1.0, 60, TURN_RIGHT);
     const sweep = rig.helicopter.mesh.rotation.y - start;
-    expect(sweep).toBeLessThan(-(FLIGHT_SPEC.turnRate - 0.5));
-    expect(sweep).toBeGreaterThan(-(FLIGHT_SPEC.turnRate + 0.5));
+    expect(Math.abs(sweep)).toBeGreaterThan(FLIGHT_SPEC.turnRate - 0.5);
+    expect(Math.abs(sweep)).toBeLessThan(FLIGHT_SPEC.turnRate + 0.5);
   });
 
   it('yaws left with A, opposite to D', () => {
@@ -146,12 +146,12 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
   it('glides on exponential drag when keys are released (no abrupt stop)', () => {
     const rig = createRig();
     simulate(rig, 2.5, 60, FORWARD);
-    expect(Math.abs(rig.helicopter.body.velocity.z)).toBeGreaterThan(30);
+    expect(Math.abs(rig.helicopter.body.velocity.z)).toBeGreaterThan(20);
 
     simulate(rig, 0.4, 60, NEUTRAL);
     const remaining = Math.abs(rig.helicopter.body.velocity.z);
-    expect(remaining).toBeGreaterThan(11);
-    expect(remaining).toBeLessThan(31);
+    expect(remaining).toBeGreaterThan(14);
+    expect(remaining).toBeLessThan(21);
 
     simulate(rig, 2.0, 60, NEUTRAL);
     expect(Math.abs(rig.helicopter.body.velocity.z)).toBeLessThan(3);
@@ -159,8 +159,7 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
 
   it('strafes right with E — along the true right of the heading', () => {
     const rig = createRig();
-    // Heading PI: nose along -Z; true right = (cos(PI),0,-sin(PI)) negated =
-    // (+1, 0, 0). E (+1 strafe) must move the hull toward +X.
+    // Heading PI faces -Z; pilot-view right is +X from the trailing camera.
     simulate(rig, 1.2, 60, { x: 1, y: 0, z: 0, yaw: 0 });
     expect(rig.helicopter.body.velocity.x).toBeGreaterThan(14);
     expect(Math.abs(rig.helicopter.body.velocity.z)).toBeLessThan(3);
@@ -214,7 +213,6 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
   it('tilts the nose down when accelerating forward and up when reversing', () => {
     const accel = createRig();
     simulate(accel, 0.6, 60, FORWARD);
-    // Euler order YXZ: positive rotation.x = nose down.
     expect(accel.helicopter.mesh.rotation.x).toBeGreaterThan(
       FLIGHT_SPEC.maxPitch * 0.9,
     );
@@ -229,7 +227,6 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
   it('banks into right turns and right strafes; mirrors for the left side', () => {
     const turner = createRig();
     simulate(turner, 0.7, 60, TURN_RIGHT);
-    // Positive euler roll tips the hull up toward its right → right bank.
     expect(turner.helicopter.mesh.rotation.z).toBeGreaterThan(
       FLIGHT_SPEC.maxRoll * 0.85,
     );

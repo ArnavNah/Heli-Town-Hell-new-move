@@ -1,6 +1,6 @@
 # 🚁 Heli-Strike Arcade Assault
 
-![Gameplay](screenshots/combat.jpg)
+![Heading-relative helicopter combat](screenshots/gameplay-combat-controller.png)
 
 > **A fast-paced, 3D low-poly arcade helicopter shooter.** Fly an advanced gunship over a living, procedural battlefield — dodge rooftop turrets, deliver high-risk cargo, complete tactical missions, deploy defensive flare countermeasures, raze enemy swarms, and topple colossal multi-phase bosses. Built with **React 19**, **Vite**, **Three.js**, and **Cannon-es**.
 
@@ -11,8 +11,10 @@
 | Main Menu | The Hangar |
 | :---: | :---: |
 | ![Main Menu](screenshots/menu.jpg) | ![The Hangar](screenshots/hangar.jpg) |
-| **High-Octane Combat & HUD** | **Colossal Boss Encounters** |
-| ![In-Game Combat](screenshots/combat.jpg) | ![Boss Battle](screenshots/boss.jpg) |
+| **Responsive Forward Flight** | **Aerodynamic Banking & Combat** |
+| ![Forward helicopter flight with the chase camera](screenshots/gameplay-flight-controller.png) | ![Banking helicopter with the combat HUD](screenshots/gameplay-combat-controller.png) |
+| **Colossal Boss Encounters** | **Tactical Battlefield View** |
+| ![Boss Battle](screenshots/boss.jpg) | ![In-Game Combat](screenshots/combat.jpg) |
 
 ---
 
@@ -98,8 +100,8 @@
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/ArnavNah/Heli-Copy.git
-   cd Heli-Copy
+   git clone https://github.com/ArnavNah/Heli-Town-Hell-new-move.git
+   cd Heli-Town-Hell-new-move
    ```
 
 2. **Install dependencies:**

@@ -7672,9 +7672,9 @@ export class GameEngine {
   /**
    * Dynamic third-person trailing chase camera (heading-locked).
    *  • speedRatio = clamp(horizontalSpeed / maxSpeed, 0, 1.2)
-   *  • pull-back 26 m + ratio*4.5, height 20 m + (alt-2.4)*0.34 + ratio*1.6
-   *  • position eased dt*10 horizontal / dt*8 vertical (snappy)
-   *  • forward lookahead 18 m + ratio*6 at y = max(3, playerY*0.55), eased dt*12
+   *  • pull-back 31 m + ratio*5.5, height 22 m + (alt-2.4)*0.42 + ratio*2
+   *  • position eased at 7.5/s horizontal and 6.5/s vertical
+   *  • forward lookahead 16 m + ratio*8 at y = playerY*0.35, eased at 9/s
    *  • subtle camera roll = 15% of the aircraft's bank roll
    */
   updateCamera(delta: number) {
@@ -7698,7 +7698,7 @@ export class GameEngine {
     }
 
     // --- Speed-dependent pull-back & height -------------------------------
-    const heading = this.helicopter.mesh.rotation.y;
+    const heading = this.helicopter.playerHeading;
     const horizSpeed =
       this.helicopter.lastHorizSpeed > 0.001
         ? this.helicopter.lastHorizSpeed
@@ -7710,21 +7710,18 @@ export class GameEngine {
     );
     const sinH = Math.sin(heading);
     const cosH = Math.cos(heading);
-    const floor = this.helicopter.smoothedHoverFloor;
-    const altAboveCushion = Math.max(0, heli.y - (floor + FLIGHT_SPEC.groundCushion));
+    const altAboveCushion = Math.max(0, heli.y - FLIGHT_SPEC.groundCushion);
 
-    // Pull back 26-30 m and ride lower so aircraft stay large in frame while
-    // still seeing the ground battlefield.
-    const camDist = 26 + speedRatio * 4.5;
-    const camHeight = 20 + altAboveCushion * 0.34 + speedRatio * 1.6;
+    const camDist = 31 + speedRatio * 5.5;
+    const camHeight = 22 + altAboveCushion * 0.42 + speedRatio * 2.0;
     const camTargetX = heli.x - sinH * camDist;
     const camTargetZ = heli.z - cosH * camDist;
     const camTargetY = heli.y + camHeight;
 
-    // Dual-stage interpolation — snappy dt*10 horizontal, dt*8 vertical so
-    // the camera stops smearing behind quick maneuvers.
-    const hK = 1 - Math.exp(-10.0 * delta);
-    const vK = 1 - Math.exp(-8.0 * delta);
+    // Frame-rate independent equivalents of the requested dt*7.5 horizontal
+    // and dt*6.5 vertical interpolation factors.
+    const hK = 1 - Math.exp(-7.5 * delta);
+    const vK = 1 - Math.exp(-6.5 * delta);
     this.baseCamPos.x += (camTargetX - this.baseCamPos.x) * hK;
     this.baseCamPos.z += (camTargetZ - this.baseCamPos.z) * hK;
     this.baseCamPos.y += (camTargetY - this.baseCamPos.y) * vK;
@@ -7735,12 +7732,9 @@ export class GameEngine {
     );
 
     // --- Dynamic forward lookahead (ahead of the nose, into the field) ----
-    // Aim higher (y = max(2.5, playerY * 0.5)) so airborne enemies at cruise
-    // altitude sit near frame-center instead of hugging the top edge.
-    const lookaheadDist = 18 + speedRatio * 6.0;
-    const lookK = 1 - Math.exp(-12.0 * delta);
-    // Aim high enough that airborne hostiles at cruise altitude stay in frame.
-    const lookTargetY = Math.max(3, heli.y * 0.55);
+    const lookaheadDist = 16 + speedRatio * 8.0;
+    const lookK = 1 - Math.exp(-9.0 * delta);
+    const lookTargetY = heli.y * 0.35;
     this.cameraLookAtTarget.x += (heli.x + sinH * lookaheadDist - this.cameraLookAtTarget.x) * lookK;
     this.cameraLookAtTarget.y += (lookTargetY - this.cameraLookAtTarget.y) * lookK;
     this.cameraLookAtTarget.z += (heli.z + cosH * lookaheadDist - this.cameraLookAtTarget.z) * lookK;
