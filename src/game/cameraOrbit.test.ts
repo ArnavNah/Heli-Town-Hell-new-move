@@ -13,7 +13,7 @@ interface ChaseState {
   lookZ: number;
 }
 
-const MAX_SPEED = 22;
+const MAX_SPEED = 72;
 
 function speedRatio(horizontalSpeed: number): number {
   return THREE.MathUtils.clamp(horizontalSpeed / MAX_SPEED, 0, 1.2);

@@ -164,7 +164,7 @@ export const MOVEMENT_CONFIG = {
  *  • Rudder A/D (←/→) yaws the heading at up to ~1.85 rad/s with smooth
  *    angular acceleration and deceleration damping.
  *  • W/S thrusts along `forwardVector = (sin h, 0, cos h)`; Q/E strafes along
- *    `strafeVector = (cos h, 0, −sin h)`. Cruise caps at 22 u/s.
+ *    `strafeVector = (cos h, 0, −sin h)`. Cruise caps at 72 u/s.
  *  • Shift climbs at 9.5 u/s, Ctrl sinks at 8.0 u/s; altitude is clamped to
  *    a 2.4 m ground cushion / 26 m ceiling above the underlying surface.
  *  • Linear momentum glides on exponential drag `v *= exp(-drag*dt)`.
@@ -173,12 +173,12 @@ export const MOVEMENT_CONFIG = {
  */
 export const FLIGHT_SPEC = {
   /** Max cruise speed (u/s). */
-  maxForwardSpeed: 22,
+  maxForwardSpeed: 72,
   /** Cyclic thrust / lateral-strafe acceleration (u/s²) toward the cap — the
    *  cap (not drag) is what governs cruise, so response is immediate. */
-  forwardAccel: 96,
+  forwardAccel: 420,
   /** Exponential drag coefficient (/s): velocity *= exp(-drag * dt). */
-  drag: 0.85,
+  drag: 1.35,
   /** Rudder turn rate cap (rad/s, ~106°/s). */
   turnRate: 1.85,
   /** Angular smoothing (/s) while yaw is held vs. after release. */

@@ -68,7 +68,7 @@ afterEach(() => {
 describe('flight spec constants', () => {
   it('encodes the tuned arcade values', () => {
     expect(FLIGHT_SPEC.turnRate).toBeCloseTo(1.85, 2);
-    expect(FLIGHT_SPEC.maxForwardSpeed).toBeCloseTo(22, 2);
+    expect(FLIGHT_SPEC.maxForwardSpeed).toBeCloseTo(72, 2);
     expect(FLIGHT_SPEC.climbRate).toBeCloseTo(9.5, 2);
     expect(FLIGHT_SPEC.sinkRate).toBeCloseTo(8.0, 2);
     expect(FLIGHT_SPEC.groundCushion).toBeCloseTo(2.4, 2);
@@ -146,12 +146,14 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
   it('glides on exponential drag when keys are released (no abrupt stop)', () => {
     const rig = createRig();
     simulate(rig, 2.5, 60, FORWARD);
-    expect(Math.abs(rig.helicopter.body.velocity.z)).toBeGreaterThan(20);
+    expect(Math.abs(rig.helicopter.body.velocity.z)).toBeGreaterThan(
+      FLIGHT_SPEC.maxForwardSpeed - 2,
+    );
 
     simulate(rig, 0.4, 60, NEUTRAL);
     const remaining = Math.abs(rig.helicopter.body.velocity.z);
-    expect(remaining).toBeGreaterThan(14);
-    expect(remaining).toBeLessThan(21);
+    expect(remaining).toBeGreaterThan(FLIGHT_SPEC.maxForwardSpeed * 0.55);
+    expect(remaining).toBeLessThan(FLIGHT_SPEC.maxForwardSpeed * 0.8);
 
     simulate(rig, 2.0, 60, NEUTRAL);
     expect(Math.abs(rig.helicopter.body.velocity.z)).toBeLessThan(3);
