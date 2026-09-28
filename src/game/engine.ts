@@ -6782,11 +6782,13 @@ export class GameEngine {
       this.helicopter.body.position.x = -bound;
       if (this.helicopter.body.velocity.x < 0) this.helicopter.body.velocity.x = 0;
     }
-    // Strict altitude envelope after the physics step (ground cushion 2.4 m /
-    // ceiling 26 m above the underlying surface — see FLIGHT_SPEC).
+    // Enforce rooftop clearance and the absolute 60 m ceiling after physics.
     const heliY = this.helicopter.body.position.y;
-    const yMin = hoverFloor + FLIGHT_SPEC.groundCushion;
-    const yMax = hoverFloor + FLIGHT_SPEC.ceiling;
+    const rooftopMinY = hoverFloor + FLIGHT_SPEC.groundCushion;
+    const yMin = rooftopMinY <= FLIGHT_SPEC.ceiling
+      ? rooftopMinY
+      : FLIGHT_SPEC.groundCushion;
+    const yMax = FLIGHT_SPEC.ceiling;
     if (heliY < yMin) {
       this.helicopter.body.position.y = yMin;
       if (this.helicopter.body.velocity.y < 0) this.helicopter.body.velocity.y = 0;

@@ -3465,7 +3465,12 @@ export class CityEnvironment {
       position: new CANNON.Vec3(x, y, z),
       shape: new CANNON.Box(new CANNON.Vec3(width / 2, height / 2, depth / 2)),
       collisionFilterGroup: COLLISION.BUILDING,
-      collisionFilterMask: COLLISION.PLAYER_MASK | COLLISION.ENEMY_MASK,
+      collisionFilterMask:
+        COLLISION.PLAYER |
+        COLLISION.ENEMY |
+        COLLISION.PLAYER_PROJECTILE |
+        COLLISION.ENEMY_PROJECTILE |
+        COLLISION.DEBRIS,
     });
     body.collisionResponse = collisionResponse;
     if (!collisionResponse) {

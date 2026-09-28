@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as CANNON from 'cannon-es';
 import * as THREE from 'three';
 import { FLIGHT_SPEC, Helicopter, type MovementCommand } from './entities';
+import { CityEnvironment } from './city';
 import { HelicopterModel } from './types';
 
 // Heading-relative command schema:
@@ -69,10 +70,12 @@ describe('flight spec constants', () => {
   it('encodes the tuned arcade values', () => {
     expect(FLIGHT_SPEC.turnRate).toBeCloseTo(1.85, 2);
     expect(FLIGHT_SPEC.maxForwardSpeed).toBeCloseTo(72, 2);
-    expect(FLIGHT_SPEC.climbRate).toBeCloseTo(9.5, 2);
-    expect(FLIGHT_SPEC.sinkRate).toBeCloseTo(8.0, 2);
+    expect(FLIGHT_SPEC.climbRate).toBeCloseTo(6.5, 2);
+    expect(FLIGHT_SPEC.sinkRate).toBeCloseTo(7.0, 2);
     expect(FLIGHT_SPEC.groundCushion).toBeCloseTo(2.4, 2);
-    expect(FLIGHT_SPEC.ceiling).toBeCloseTo(26.0, 2);
+    expect(FLIGHT_SPEC.ceiling).toBeCloseTo(60.0, 2);
+    expect(FLIGHT_SPEC.spawnAltitude).toBeGreaterThanOrEqual(15);
+    expect(FLIGHT_SPEC.spawnAltitude).toBeLessThanOrEqual(30);
     expect(FLIGHT_SPEC.maxPitch).toBeCloseTo(0.32, 3);
     expect(FLIGHT_SPEC.maxRoll).toBeCloseTo(0.48, 3);
     expect(FLIGHT_SPEC.tiltResponse).toBeCloseTo(10, 3);
@@ -137,6 +140,27 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
     expect(rig.helicopter.body.velocity.z).toBeLessThan(-(FLIGHT_SPEC.maxForwardSpeed - 2));
   });
 
+  it('cannot fly through an intact building at full thrust', () => {
+    const rig = createRig();
+    const city = new CityEnvironment(rig.scene, rig.world);
+    const block = city.blocks.find((candidate) => candidate.height > 30 && candidate.body);
+    expect(block).toBeDefined();
+    if (!block) return;
+
+    // The helicopter starts facing -Z, just outside the building's front wall.
+    let wallContacts = 0;
+    rig.helicopter.body.addEventListener('collide', (event: { body?: CANNON.Body }) => {
+      if (event.body === block.body) wallContacts++;
+    });
+    rig.helicopter.body.position.set(block.x, 22, block.z + block.depth / 2 + 5);
+    simulate(rig, 0.8, 60, FORWARD);
+
+    expect(wallContacts).toBeGreaterThan(0);
+    expect(rig.helicopter.body.position.z).toBeGreaterThan(
+      block.z + block.depth / 2 + 2.35 - 0.5,
+    );
+  });
+
   it('responds immediately — a single frame already shows strong thrust', () => {
     const rig = createRig();
     step(rig, 1 / 60, FORWARD);
@@ -174,9 +198,12 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
     expect(Math.abs(rig.helicopter.body.velocity.z)).toBeLessThan(3);
   });
 
-  it('climbs at ~9.5 m/s with Shift and sinks at ~8.0 m/s with Ctrl', () => {
+  it('builds lift gradually, then reaches the limited climb and sink rates', () => {
     const climber = createRig();
     climber.helicopter.body.position.y = 10;
+    step(climber, 1 / 60, CLIMB);
+    expect(climber.helicopter.body.velocity.y).toBeGreaterThan(0);
+    expect(climber.helicopter.body.velocity.y).toBeLessThan(1);
     simulate(climber, 0.9, 60, CLIMB);
     expect(climber.helicopter.body.velocity.y).toBeCloseTo(
       FLIGHT_SPEC.climbRate,
@@ -192,6 +219,17 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
     );
   });
 
+  it('keeps climbing briefly after release, then settles into a hover', () => {
+    const rig = createRig();
+    simulate(rig, 1, 60, CLIMB);
+    const releaseY = rig.helicopter.body.position.y;
+    step(rig, 1 / 60, NEUTRAL);
+    expect(rig.helicopter.body.velocity.y).toBeGreaterThan(0);
+    simulate(rig, 2, 60, NEUTRAL);
+    expect(rig.helicopter.body.position.y).toBeGreaterThan(releaseY + 1);
+    expect(Math.abs(rig.helicopter.body.velocity.y)).toBeLessThan(0.15);
+  });
+
   it('clamps altitude strictly to the ground cushion / ceiling band', () => {
     const low = createRig();
     low.helicopter.body.position.y = 2.0;
@@ -203,13 +241,23 @@ describe('heading-relative flight (FLIGHT_SPEC)', () => {
     expect(low.helicopter.body.velocity.y).toBeGreaterThanOrEqual(-0.01);
 
     const high = createRig();
-    high.helicopter.body.position.y = 27;
+    high.helicopter.body.position.y = 61;
     high.helicopter.body.velocity.y = 8;
     simulate(high, 0.2, 60, NEUTRAL);
     expect(high.helicopter.body.position.y).toBeLessThanOrEqual(
       FLIGHT_SPEC.ceiling + 0.01,
     );
     expect(high.helicopter.body.velocity.y).toBeLessThanOrEqual(0.01);
+  });
+
+  it('never raises the 60 m ceiling over a tall rooftop', () => {
+    const rig = createRig();
+    rig.helicopter.body.position.y = 35;
+    rig.helicopter.smoothedHoverFloor = 75;
+    rig.helicopter.setHoverFloor(75);
+    rig.helicopter.update(1 / 60, 1 / 60, undefined, undefined, false, false, true, CLIMB);
+    expect(rig.helicopter.body.position.y).toBeLessThan(36);
+    expect(rig.helicopter.body.position.y).toBeLessThanOrEqual(FLIGHT_SPEC.ceiling);
   });
 
   it('tilts the nose down when accelerating forward and up when reversing', () => {

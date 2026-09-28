@@ -165,8 +165,8 @@ export const MOVEMENT_CONFIG = {
  *    angular acceleration and deceleration damping.
  *  • W/S thrusts along `forwardVector = (sin h, 0, cos h)`; Q/E strafes along
  *    `strafeVector = (cos h, 0, −sin h)`. Cruise caps at 72 u/s.
- *  • Shift climbs at 9.5 u/s, Ctrl sinks at 8.0 u/s; altitude is clamped to
- *    a 2.4 m ground cushion / 26 m ceiling above the underlying surface.
+ *  • Shift climbs at 6.5 u/s, Ctrl sinks at 7 u/s with vertical inertia.
+ *    The usual cruise band is 15–30 m, with a hard 60 m world ceiling.
  *  • Linear momentum glides on exponential drag `v *= exp(-drag*dt)`.
  *  • Mesh pose (Euler order YXZ = Ry→Rx→Rz): pitch = ±0.32 rad (~18°),
  *    roll = ±0.48 rad (~28°), both eased with `1 - exp(-10*dt)`.
@@ -185,17 +185,18 @@ export const FLIGHT_SPEC = {
   yawAccelResponse: 8.0,
   yawDecelResponse: 6.5,
   /** Collective climb (+) / sink (−) rates (u/s). */
-  climbRate: 9.5,
-  sinkRate: 8.0,
-  /** Vertical acceleration (u/s²) — how fast the collective rate is reached. */
-  verticalAccel: 110,
-  /** Strict altitude envelope above the underlying surface (u). */
+  climbRate: 6.5,
+  sinkRate: 7.0,
+  /** Vertical acceleration (u/s²); collective takes time to gain lift. */
+  verticalAccel: 9,
+  /** Neutral collective drag (/s) preserves some vertical momentum. */
+  verticalDrag: 2.2,
+  /** Minimum clearance above terrain or rooftops (u). */
   groundCushion: 2.4,
-  ceiling: 26.0,
-  /** Spawn altitude (u) — mid-band so climb AND descend both have room and
-   *  respond the instant a run starts (spawning at `ceiling` made the
-   *  collective feel dead: holding climb was clamped to nothing). */
-  spawnAltitude: 15.0,
+  /** Absolute world-space ceiling (u), even over tall rooftops. */
+  ceiling: 60.0,
+  /** Start near rooftop level, with room to climb and descend. */
+  spawnAltitude: 22.0,
   /** Aero tilt limits (rad): nose-down ~18° max pitch, ~28° max bank. */
   maxPitch: 0.32,
   maxRoll: 0.48,
@@ -1168,21 +1169,27 @@ export class Helicopter extends Entity {
     this.desiredVelocity.z = vz;
     this.lastHorizSpeed = Math.hypot(vx, vz);
 
-    // ---- Collective vertical lift: Shift +9.5 u/s, Ctrl −8.0 u/s ----------
+    // ---- Collective vertical lift with inertia and a limited climb rate ---
     let targetVy =
       vert > 0 ? S.climbRate * vert : vert < 0 ? S.sinkRate * vert : 0;
     targetVy *= engineEff * cargo;
-    const vyStep = S.verticalAccel * delta;
-    body.velocity.y += THREE.MathUtils.clamp(targetVy - body.velocity.y, -vyStep, vyStep);
-    if (vert === 0 && Math.abs(body.velocity.y) <= vyStep) body.velocity.y = 0;
+    if (Math.abs(vert) > 0.001) {
+      const vyStep = S.verticalAccel * delta;
+      body.velocity.y += THREE.MathUtils.clamp(targetVy - body.velocity.y, -vyStep, vyStep);
+    } else {
+      body.velocity.y *= Math.exp(-S.verticalDrag * delta);
+      if (Math.abs(body.velocity.y) < 0.02) body.velocity.y = 0;
+    }
+    body.velocity.y = THREE.MathUtils.clamp(body.velocity.y, -S.sinkRate, S.climbRate);
 
-    // Terrain-following envelope (smoothed hover floor = ground or rooftop
-    // beneath the hull): strictly [floor + 2.4 m, floor + 26 m].
+    // Keep clearance over reachable rooftops without raising the world ceiling.
+    // Taller towers are solid obstacles and must be flown around.
     this.smoothedHoverFloor +=
       (this.hoverFloor - this.smoothedHoverFloor) *
       (1 - Math.exp(-(this.hoverFloor > this.smoothedHoverFloor ? 12 : 9) * delta));
-    const minY = this.smoothedHoverFloor + S.groundCushion;
-    const maxY = this.smoothedHoverFloor + S.ceiling;
+    const rooftopMinY = this.smoothedHoverFloor + S.groundCushion;
+    const minY = rooftopMinY <= S.ceiling ? rooftopMinY : S.groundCushion;
+    const maxY = S.ceiling;
     let py = body.position.y;
     if (py <= minY) {
       py = minY;
